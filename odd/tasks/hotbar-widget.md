@@ -1,6 +1,8 @@
 # Feature: hotbar-widget — barra flotante de Windows siempre-encima (giro completo, 2026-09-26)
 
-Status: **en implementación** — decisiones de producto cerradas; pendiente build del widget WPF.
+Status: **batch HB12-HB17 casi cerrado** — clip, precios oficiales, histórico por agente
+(mes + proyectos) y acciones `agent-usage:<agente>` implementados y verificados; docs
+rebrand listas; pendiente push a `origin/main` (autorizado tras docs) y rename local.
 
 > Este es el NUEVO rumbo del proyecto. El diseño previo (menú popup de Herdr, `herdr-hub.md`)
 > queda **descartado por decisión del usuario** (2026-09-26): "no es para nada lo que esperaba".
@@ -88,6 +90,46 @@ permite descolapsar. Reutilizable: las opciones y acciones se configuran en `hot
 - [x] HB7 — Docs/rebrand: README, docs/architecture.md, docs/hotbar.md, referencias al nombre.
 - [x] HB8 — Self-test: `-SelfTest` (construye ventana 500 ms, valida XAML, geometría, config;
   cierra solo) para verificación sin E2E manual.
+- [x] HB9 — Readers de uso por agente (`hotbar/lib/Get-AgentUsage.ps1`, dot-source): claude
+  (nuevo `*.jsonl` por mtime en `~/.claude/projects`), codex (idem en `~/.codex/sessions`),
+  opencode (fila `session` con `MAX(time_updated)` de la SQLite
+  `~/.local/share/opencode/opencode.db`, via patrón de `Read-SqliteQuery`). Por agente: Ok con
+  tokens + dinero USD, o `sin datos (razón)`. Lectura acotada (cola del archivo si excede
+  ~10k líneas, marcada como aproximada); nunca fabricar valores. **Build:** `3b783f6`.
+- [x] HB10 — Panel "uso en vivo": acción `agent-usage` (toggle del panel inline existente) que
+  refresca con `DispatcherTimer` (~5 s) mientras está abierto; placeholder `reading...`; $ de
+  modelos locales opencode = 0.0 (honesto); timer se detiene al cerrar/colapsar. **Build:** `328adbc`.
+- [x] HB11 — Config + self-test: ítem `usage` en config.json (glyph `0x0024`, tooltip en
+  español), `agent-usage` en `KnownActions`; `-SelfTest` ejercita los tres readers con timeouts
+  acotados y valida líneas ≤ `MaxPanelChars` (con `sin datos` honesto si un lector falla).
+  **Build:** `328adbc` + default `SelfTestMs` 400 ms en `launch-hotbar.ps1` (`486dcca`).
+- [x] HB12 — Clip del ItemsPanel: `PathGeometry` con borde recto + arco media elipse
+  (radio 200) como `Clip` del panel de celdas (WPF NO recorta hijos al CornerRadius; el
+  glow de hover del primer/último ítem desbordaba la silueta). Recalculado en
+  `SizeChanged` y al abrir. **Gotcha fix:** WPF `New-Object` anidado falla en PS 5.1
+  (Object[] binding) → construcciones con `::new()`.
+- [x] HB13 — Tabla de precios oficiales (`hotbar/lib/Get-AgentPricing.ps1`, NUEVO):
+  claude-opus-5-5 ($4/$20, cache-read $0.20, cache-write $5 5m — el store no distingue 5m/1h,
+  asunción documentada) y gpt-5.6-luna ($0.20/$1.20, cached $0.02, cache-write $0.25).
+  `Get-AgentEstimatedCost`; modelo sin precio -> `sin datos` honesto (nunca inventar una tasa).
+- [x] HB14 — Histórico por agente (mes en curso + por proyecto abierto en Herdr) en
+  `Get-AgentUsage.ps1`: agregación mensual y por cwd con presupuesto de bytes global (marca
+  `~` si se truncó); proyectos abiertos desde `%APPDATA%\herdr\session.json`
+  (`workspaces[].identity_cwd`, normalizado); opencode vía SQL (SUM por mes y GROUP BY
+  project.worktree, costos REALES). Estimar con precios oficiales marcado `(est)` por
+  decisión explícita del usuario; `Find-HotbarAgentProject` agrega por prefijo de ruta
+  (subdirs → repo).
+- [x] HB15 — Acciones `agent-usage:claude|codex|opencode` en hotbar.ps1 (validación regex
+  en self-test, dispatch, panel por agente mes+proyectos con `(est)`/`~` honestos) +
+  config.json (acciones por agente, monitor `"primary"`, formato limpio). **Gotchas
+  fix:** local `$agent` vs parámetro `[string]$Agent` (case-insensitive, `$null`→`""`)
+  → renombrada a `$matched`; marcador `(est)` indebido en costo real → conteo
+  estCount/realCount (solo estimado si todos estimados o mezcla).
+- [x] HB16 — Docs multi-plataforma honestas: README/docs reescritos como herramienta
+  Windows v1 (PS 5.1 + WPF); capa de datos desacoplada como único avance cross-platform;
+  plugin Herdr como superficie legada opcional.
+- [ ] HB17 — Rename local del folder `herdr-omniroute` -> `hotbar` (solo al FINAL del batch;
+  git unaffected; re-verificar desde la nueva ruta).
 
 ## Authorized scope (confirmado)
 - Repo `hotbar` (antes herdr-omniroute): manifest de plugin, scripts/, docs/, hotbar/.
@@ -106,6 +148,9 @@ permite descolapsar. Reutilizable: las opciones y acciones se configuran en `hot
 6. `-SelfTest` pasa (XAML válido, config válido, geometría esperada, apertura/cierre automáticos).
 7. 0 bytes no-ASCII en `.ps1` (glifos por `[char]0x…`); config.json y XAML con entidades `&#x…;`
    o `\u…` si hace falta (JSON) para mantener ASCII.
+8. `agent-usage` muestra el saldo de la sesión en vivo de los tres agentes (tokens + $ en USD),
+   refrescando ~5 s mientras el panel está abierto; `sin datos (razón)` honesto si un store no es
+   legible; `$0.00` real para modelos locales de opencode (no fabricado).
 
 ## Verification commands
 - Parse de todos los .ps1 nuevos (Parser::ParseFile → 0 errores).
@@ -127,7 +172,7 @@ PowerShell 5.1.26100.9444, `sqlite3.exe` en PATH):
 | `Parser::ParseFile` en los 12 `.ps1` | 0 errores |
 | `[xml]` del XAML embebido | OK (7423 chars) |
 | `config.json` → `ConvertFrom-Json` | OK, 5 ítems, todas las `action` soportadas |
-| `hotbar.ps1 -SelfTest` | `PASS`, exit 0, ~1.1–1.6 s (límite 2 s) |
+| `hotbar.ps1 -SelfTest` | `PASS`, exit 0, ~1.6–2.0 s. El default del window pasó de 700 a 400 ms y el check **ya no aserta** wall-clock (flaky en máquina ocupada): imprime `elapsed_ms` y `usage_budget`. La ventana era puro wait; las aserciones son por datos, no por ojo. |
 | Camino de fallo del self test | exit 1; reporta ítem + glifo inválidos |
 | Bytes no-ASCII (`hotbar/*.ps1`, `scripts/*.ps1`, manifest, config) | **0** en 17 ficheros |
 | `herdr plugin action list` | 4 acciones: `dashboard`, `open-status-pane`, `start`, `status`. **Sin `menu`** |
@@ -174,12 +219,12 @@ No se verificó "a ojo": se capturó la pantalla y se midió la silueta.
    bytes no-ASCII en comentarios (●/○). Sustituidos por `U+25CF`/`U+25CB`; el código
    ya usaba `[char]0x25CF`.
 
-### Nota sobre las 5 celdas
+### Nota sobre las celdas
 
-`claude`, `codex` y `opencode` quedan con `action: "none"` **declarado**: son
-huecos honestos, y el tooltip lo dice. El contrato de `action` existe y funciona;
-lo que falta es la decisión del usuario sobre qué debe lanzar cada agente. Agregar
-un ítem o cambiar su acción no requiere tocar código.
+`claude`, `codex` y `opencode` llevan ahora `action: "agent-usage:<agente>"`: pulsar la
+celda abre el panel del mes + desglose por proyecto para ese agente. La celda `usage`
+global (glyph `0x0024`) abre el panel agregado. Cambiar una acción (o volver a `none`
+como hueco honesto) no requiere tocar código: es `config.json`.
 
 ## Work units (commits en `main`, sin push)
 
@@ -189,12 +234,45 @@ un ítem o cambiar su acción no requiere tocar código.
 | 2 | `8e82523` | `feat(hotbar): add the WPF half-moon widget, launcher and self-test` |
 | 3 | `10dfe73` | `refactor(plugin): drop the hub/menu surface and bump the manifest to 0.6.0` |
 | 4 | `4152b25` | `docs: rebrand the repo to hotbar` |
-| 5 | este | `docs(odd): record hotbar verification and work-unit identities` |
+| 5 | `8f1fe17` | `docs(odd): record hotbar verification and work-unit identities` |
+| 6 | `318aa61` | `ui(hotbar): double the collapse handle` |
+| 7 | `889c967` | `docs(odd): record collapse handle commit evidence` |
+| 8 | `3b783f6` | `feat(hotbar): add per-agent usage readers for claude, codex and opencode` |
+| 9 | `328adbc` | `feat(hotbar): live session usage panel with 5s refresh and self-test` |
+| 10 | `486dcca` | `fix(hotbar): keep the launcher selftest window at 400ms default` |
 
 `odd/tasks/omniroute-autofallback.md` tenía cambios previos sin relación con hotbar y
 **no** se han incluido en ninguna de estas unidades.
 
 ## Progress notes
+- 2026-09-26 (batch 2 — implementación HB12-HB16): implementado inline y verificado.
+  * **Clip HB12**: `Update-HotbarBarClip` con `::new()` tras diagnosticar que `New-Object`
+    anidado dentro del constructor falla en PS 5.1 (caso C repro THREW; `::new()` OK).
+    Eager call + `SizeChanged` del ItemsPanel.
+  * **Render por agente verificado (harness 8 MB**, dot-source de hotbar.ps1 hasta
+    `# Entry point`): claude 211,3k/$53.04 (est) con 2 buckets agregados por prefijo
+    (incoders-commerce + Commerce.Web → 211.293 tokens, $53.04); codex 37,5k/$0.28 (est);
+    opencode 1,6M/$0.00 **real** (sin `(est)`). Líneas ≤ 38 chars (máx. 31). Proyectos
+    abiertos: incoders-commerce, herdr-omniroute, personal (session.json).
+  * **Gotcha render vacío**: local `$agent` pisaba el parámetro `[string]$Agent`
+    (case-insensitive, `$null`→`""`) → `eq` nunca matcheaba. Fix `$matched`.
+  * **Marcador `(est)` indebido en costo real**: la agregación marcaba estimado con
+    cualquier costo no-estimado; fix con estCount/realCount: estimado solo si todos
+    estimados o mezcla; set real (opencode) sin marcador.
+  * `config.json` reescrito y validado (monitor "primary"; claude/codex/opencode →
+    `agent-usage:<agente>`; tooltips con dominio completo). El árbol previo tenía el
+    monitor pegado por un drag (`\\.\DISPLAY1`) + re-indentado.
+  * `-SelfTest` PASS (el agente: `agent_panel_lines=8`, `agent_est=True`), parse 0
+    errores, ASCII 0. Widget reiniciado: 19296 → 25292 vía `hotbar\launch-hotbar.ps1`
+    (el launcher vive en `hotbar/`, no en la raíz).
+  * **Docs HB16**: README widget-first (dinero por agente = titular), hotbar.md con
+    sección paneles/marcadores/precios, architecture.md con capa de datos desacoplada +
+    mermaid actualizado, status-panes.md roadmap ✅ (agente-output entregado por el widget).
+- 2026-09-26 (batch 2 autorizado, HB12-HB17): métricas por agente mes+proyecto con precios
+  oficiales (claude-opus-5-5 $4/$20/cache-read $0.20/cache-write $5; gpt-5.6-luna
+  $0.20/$1.20/cached $0.02/write $0.25 — aportados por el usuario), fix del hover por Clip
+  del BarBorder, rebrand docs honesto multi-plataforma, rename local del folder al final.
+  Push a `origin/main` autorizado únicamente tras dejar la documentación consistente.
 - 2026-09-26: giro completo del proyecto. Decisiones: widget WPF puro + conservar start/status;
   nombre `hotbar`; forma media luna; 4-5 opciones; colapso a flecha. GitHub renombrado a
   `montesgp/hotbar`, remote local actualizado, keybind `prefix+m` removido del config global.
@@ -209,3 +287,42 @@ un ítem o cambiar su acción no requiere tocar código.
   el centro al soltar, persistencia de `monitor` en config.json. Botón collapse ampliado al
   doble (56x36, fuente 24). Verificación: selftest PASS 1.4s, widget relanzado (pid 17244).
   Evidencia: commit `318aa61`.
+- 2026-09-26 (panel de uso en vivo — build HB9-HB11): readers + panel + config + self-test
+  implementados por writer delegado y spot-checkeados por el orquestador (parse 0, ASCII 0,
+  `-SelfTest` PASS, selftest 5/5). Commits `3b783f6`, `328adbc`; el launcher pasaba 700 ms y
+  pisaba el nuevo default → `486dcca` (400 ms). Decisiones con evidencia:
+  * **codex = último registro, no suma**: `payload.turn_token_usage` es ACUMULATIVO por sesión
+    (21 registros, `input_tokens` crece 30796 → 1356488; el último == `thread_token_usage`);
+    sumar inflaba la sesión 10x. Corrige la suposición del brief (mejor decisión, aceptada).
+  * **Costo claude/codex: no existe clave en este equipo** (verificado walk profundo del jsonl
+    más nuevo y búsqueda textual en los 4 codex más nuevos: cero matches). `Get-AgentUsage.ps1`
+    sondea una lista de candidatos (`cost`, `costUSD`, `cost_usd`, `total_cost_usd`,
+    `totalCost`) y reporta `costo: sin datos` — nunca un cero no medido. opencode sí: `session.cost`
+    real (modelo local → `$0.00` legítimo).
+  * **Dedupe claude por `requestId`** (306 entradas con usage pero 156 requestIds distintos:
+    los mensajes assistant se guardan duplicados; sumar duplicaba cache_read 53 943 031 →
+    27 189 253 correcto).
+  * **`Get-Content -Tail` descartado**: 6390 ms en 2.5 MB vs 16 ms streaming con seek; el lector
+    abre con `FileShare.ReadWrite` (claude está appendeando) y pre-filtra con `IndexOf` antes de
+    `ConvertFrom-Json`.
+  * **Gotcha PowerShell re-incidente**: `[string]$Panel` + local `$panel` colisionan (case-
+    insensitive) → `$panel.Visibility` moría ("the property 'Visibility' cannot be found").
+    Misma clase que `$Port`/`$GatewayPort` en Get-OmniRouteStatus.ps1; renombrado a `$panelBorder`.
+  * **Selftest lee 512 KB** (no 8 MB, ratio en comentario: baseline 1409 ms + lectura fría real
+    550-730 ms no caben en 2 s) y no aserta `< 2s`; imprime presupuesto. `~` va tras el nombre
+    del agente, NO al final de línea (el right-trim de `Format-HotbarLine` se lo comía).
+  * Snapshot real en producción (8 MB, proceso limpio): claude OK in 322 / out 108K / cache 27.7M
+    (`claude-opus-5-5`); codex OK in 1.4M / out 6.9K / cache 1.3M (`gpt-5.6-luna`, sesión del
+    21-sep, sin actividad desde entonces); opencode OK in 184.6K / out 52.1K / cache 13.2M
+    (`big-pickle`, `$0.00 modelo local`). Líneas ≤ 38 chars, `Approximate=False`.
+  * **RDD/assess**: `mode status` = on (global). `review assess --base-ref origin/main
+    --committed-only` → risk **medium** (config change `herdr-plugin.toml`), 17 paths / 4325
+    líneas, `review_due=true (slice_budget_reached)`. START concedido → `lens_context_budget_exceeded`
+    (candidato completo excede el budget de contexto nativo). Scope reducido a los 4 archivos del
+    feature (1149 líneas): START concedido, 1 lens (`review-reliability`), pero el lens falló
+    **antes de ejecutar**: "OpenCode's free tier can only be used from within OpenCode" — el
+    proveedor Console free tier rechaza spawnear subagentes (mismo muro que 61e2103; no
+    transitorio, no es defecto de gentle-ai). Outcome registrado: **no disponible**; transacción
+    `review-53364d8fc1a9d3de` liberada vía `gentle-ai review abandon` (operator_disposition,
+    `status: committed`, a cuarentena). El boundary NO avanza (nada reconocido); la entrega sigue
+    bajo política ordinaria con los controles funcionales ya pasados.
