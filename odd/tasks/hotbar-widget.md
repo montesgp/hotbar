@@ -2,8 +2,9 @@
 
 Status: **FASE 2 ABIERTA — port a Tauri 2 (cross-platform)**. Decisión de stack del usuario
 (2026-09-27): **Tauri 2 (Rust + webview)**; la estética WPF actual prevalece como theme
-`classic` por defecto. V1 cerrado salvo HB17 (rename manual). Pendiente: toolchain Rust en
-esta máquina (cargo/rustc ausentes) antes de escalar el scaffold.
+`classic` por defecto. V1 cerrado salvo HB17 (rename manual). Toolchain instalada +
+HB18-HB20 HECHOS (commit `bd8f769` en main, 6850 líneas). Siguiente: HB21 (theme classic
+en CSS, colapso, drag multi-monitor). Pendiente: estrategia de entrega (ask-on-risk).
 
 ## Fase 2 — Port a Tauri 2 (Windows + Ubuntu + macOS)
 
@@ -342,6 +343,19 @@ como hueco honesto) no requiere tocar código: es `config.json`.
 **no** se han incluido en ninguna de estas unidades.
 
 ## Progress notes
+- 2026-09-27 (batch Fase 2 HB18-HB20, commit `bd8f769`): toolchain instalada (winget,
+  MSVC 14.51 + SDK 10.0.26100), scaffold Tauri 2 (`hotbar-tauri/`), config v2 + temas como
+  datos, bundle real (setup.exe 1.35 MiB / msi 2.01 MiB). **RDD/assess**: risk **high**
+  (process_boundary), 39 paths / 6854 líneas → `review_due=true`. Consent v3 → concedido.
+  START → transacción `review-74070bc092f92e8b` (4 lenses review-risk/resilience/
+  readability/reliability, budget 200). Los 4 lenses fallaron **antes de ejecutar**:
+  "OpenCode's free tier can only be used from within OpenCode" — mismo muro de provider
+  que `review-137027ec4af59e0f` (no transitorio, no es defecto de gentle-ai). Outcome:
+  **no disponible**; transacción liberada vía `gentle-ai review abandon`
+  (operator_disposition, `status: committed`, a cuarentena
+  `review-74070bc092f92e8b-2232279358`, `captured_lens_results=[]`,
+  `findings_present=false`). Boundary NO avanza; entrega bajo política ordinaria con los
+  controles funcionales ya pasados.
 - 2026-09-27 (cierre del batch HB12-HB17): push a `origin/main` ejecutado
   (`486dcca..69c1fb2` = 7506192 fix sqlite reader reload, dfcb523 pricing, 2a6a223
   per-agent month history, 5743257 per-agent action panels, ca04a3d docs rebrand,
