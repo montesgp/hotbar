@@ -33,13 +33,27 @@
               cost, tokens_input, tokens_output, tokens_reasoning,
               tokens_cache_read, tokens_cache_write, model (JSON text).
 
-  MONEY IS NOT INVENTED. Neither jsonl store carries a cost key on this machine
-  (checked the newest claude file deep-walked, and the four newest codex files
-  by text search: zero matches for a cost field, only the word inside
-  conversation content). So the readers look for a cost field through a fixed
-  candidate list and report $null - "custo: sin datos" - when there is none. A
-  zero is only ever printed when the store itself says 0.0, which is the real
-  value for opencode's local models.
+  MONEY IS NOT INVENTED... unless the user says a price-card total may stand in
+  for a bill, and even then it is flagged. Neither jsonl store carries a cost
+  key on this machine (checked the newest claude file deep-walked, and the four
+  newest codex files by text search: zero matches for a cost field, only the
+  word inside conversation content). So the readers look for a cost field
+  through a fixed candidate list; with none, they ask Get-AgentEstimatedCost
+  (official prices in Get-AgentPricing.ps1, user decision 2026-09-26) and only
+  a model that HAS a price row produces money, marked Estimated = $true so the
+  panel can never pass it off as billed. A zero is only ever printed when the
+  store itself says 0.0, which is the real value for opencode's local models.
+
+  HISTORY. The same stores also feed the per-agent panel (HB14): month-to-date
+  counters plus a per-project split for the projects that Herdr has open
+  (workspaces[].identity_cwd in %APPDATA%\herdr\session.json). claude sums
+  every *.jsonl under .claude\projects (those files ARE billed, subagents and
+  all), codex reads the LAST counter record per session file (cumulative, both
+  token_usage_record and token_count shapes), opencode runs one SELECT per
+  month plus one GROUP BY project.worktree. Bytes are bounded across the whole
+  scan, newest files first, and truncation is reported as Approximate = $true.
+  opencode money is real (session.cost); claude and codex money is estimated
+  with the same Get-AgentEstimatedCost rules as the live panel.
 
   THREE THINGS THAT ARE EASY TO GET WRONG, all of them verified here:
 
@@ -201,6 +215,7 @@ function New-AgentUsageResult {
     ReasoningTokens = 0
     Cost            = $null
     CostField       = ""
+    Estimated       = $false
     Model           = ""
     Local           = $false
     Detail          = ""
@@ -446,9 +461,23 @@ function Get-ClaudeAgentUsage {
   $result.CacheTokens = $cacheRead + $cacheWrite
   $result.ReasoningTokens = $reasoning
   $result.CostField = $costField
-  if ($costField) { $result.Cost = $costSum } else { $result.Cost = $null }
+
+  # Money from the store wins when the store records it. Otherwise the official
+  # price row for the session model estimates it, flagged Estimated so the panel
+  # can never pass a price-card total off as a bill; a model with no price row
+  # still means no money at all.
+  if ($costField) {
+    $result.Cost = $costSum
+  } else {
+    $est = Get-AgentEstimatedCost -Model $result.Model -InputTokens $input -OutputTokens $output -CacheReadTokens $cacheRead -CacheWriteTokens $cacheWrite
+    if ($est.Estimated) {
+      $result.Cost = $est.Amount
+      $result.Estimated = $true
+    }
+  }
 
   $result.Detail = ("{0} - {1} entradas - cache = read+creation" -f $name, $entries)
+  if ($result.Estimated) { $result.Detail = $result.Detail + (" - est: {0}" -f $result.Model) }
   if ($state.Dropped -gt 0 -or $state.TruncatedTail) {
     $result.Approximate = $true
     $result.Detail = $result.Detail + (" - aproximada: {0} lineas fuera del presupuesto de {1} MB" -f $state.Dropped, [int]($budget / 1MB))
@@ -538,14 +567,30 @@ function Get-CodexAgentUsage {
   }
 
   $result.Ok = $true
-  $result.InputTokens = Get-AgentInt64 $last "input_tokens"
+  $inputTokens = Get-AgentInt64 $last "input_tokens"
+  $cachedInput = Get-AgentInt64 $last "cached_input_tokens"
+  $cacheWriteTokens = Get-AgentInt64 $last "cache_write_input_tokens"
+  $result.InputTokens = $inputTokens
   $result.OutputTokens = Get-AgentInt64 $last "output_tokens"
-  $result.CacheTokens = (Get-AgentInt64 $last "cached_input_tokens") + (Get-AgentInt64 $last "cache_write_input_tokens")
+  $result.CacheTokens = $cachedInput + $cacheWriteTokens
   $result.ReasoningTokens = Get-AgentInt64 $last "reasoning_output_tokens"
   $result.CostField = $costField
-  if ($hasCost) { $result.Cost = $costValue } else { $result.Cost = $null }
+
+  if ($hasCost) {
+    $result.Cost = $costValue
+  } else {
+    # OpenAI bills the cached portion at the cached price and the rest at the
+    # input price, so the estimator gets UNCached input here.
+    $uncached = [Math]::Max(0, $inputTokens - $cachedInput)
+    $est = Get-AgentEstimatedCost -Model $result.Model -InputTokens $uncached -OutputTokens $result.OutputTokens -CacheReadTokens $cachedInput -CacheWriteTokens $cacheWriteTokens
+    if ($est.Estimated) {
+      $result.Cost = $est.Amount
+      $result.Estimated = $true
+    }
+  }
 
   $result.Detail = ("{0} - {1} registros - ultimo acumulado" -f $name, $records)
+  if ($result.Estimated) { $result.Detail = $result.Detail + (" - est: {0}" -f $result.Model) }
   if ($state.Dropped -gt 0 -or $state.TruncatedTail) {
     $result.Approximate = $true
     $result.Detail = $result.Detail + (" - aproximada: {0} lineas fuera del presupuesto de {1} MB" -f $state.Dropped, [int]($budget / 1MB))
@@ -747,4 +792,680 @@ function Get-AgentUsageSnapshot {
   $takenAt = Get-Date
   foreach ($agent in $agents) { $agent | Add-Member -NotePropertyName TakenAt -NotePropertyValue $takenAt -Force }
   return $agents
+}
+
+# ---------------------------------------------------------------------------
+# History (HB14): month-to-date counters plus a per-project split, for the
+# per-agent panel. The same stores, the same honesty rules as the live readers.
+# ---------------------------------------------------------------------------
+
+# Total read budget across ALL history files for one agent scan. The scan is
+# newest-file-first and each file only gets the remaining budget, so a month of
+# work is exact while a machine-generated runaway still cannot stall the bar.
+$script:UsageHistoryMaxBytes = 8MB
+
+# Month labels for the panel. Deliberately ASCII and fixed: the panel text is
+# Spanish without accents, and a culture-dependent abbreviated month could
+# render "sep" here and "SEP" there.
+$script:AgentMonthNames = @("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+<#
+.SYNOPSIS
+  Local start of the current month, as a [datetime] for comparisons.
+#>
+function Get-AgentMonthStartLocal {
+  [CmdletBinding()]
+  param()
+
+  $now = Get-Date
+  return $now.Date.AddDays(1 - [int]$now.Day)
+}
+
+<#
+.SYNOPSIS
+  The ASCII-safe Spanish label of the current month ("sep" for September).
+#>
+function Get-AgentMonthLabel {
+  [CmdletBinding()]
+  param()
+
+  $now = Get-Date
+  return $script:AgentMonthNames[[int]$now.Month - 1]
+}
+
+<#
+.SYNOPSIS
+  Parses an ISO-8601 timestamp (claude and codex both write UTC with Z) to
+  local [datetime], or $null when unparsable.
+#>
+function ConvertFrom-AgentTimestamp {
+  [CmdletBinding()]
+  param([string]$Text)
+
+  if (-not $Text) { return $null }
+  try {
+    $dto = [System.DateTimeOffset]::Parse($Text, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
+    return $dto.LocalDateTime
+  } catch { return $null }
+}
+
+<#
+.SYNOPSIS
+  The canonical form of a project path: trimmed, slashes normalized to
+  backslashes, trailing separator removed. Herdr's session.json stores
+  identity_cwd WITH a trailing backslash ("C:\repositories\...\") and the
+  session jsonl stores vary, so every cwd goes through here before matching.
+#>
+function Normalize-AgentProjectPath {
+  [CmdletBinding()]
+  param([string]$Path)
+
+  if (-not $Path) { return "" }
+  $p = ([string]$Path).Trim()
+  if (-not $p) { return "" }
+  $p = $p.Replace('/', '\')
+  $p = $p.TrimEnd([char[]]('\', ' '))
+  return $p
+}
+
+<#
+.SYNOPSIS
+  The projects Herdr currently has open, from %APPDATA%\herdr\session.json.
+
+.DESCRIPTION
+  Verified shape (2026-09-26): version 3, workspaces[] each with identity_cwd,
+  e.g. "C:\repositories\personal\herdr-omniroute\" and
+  "C:\repositories\incoders\incoders-commerce\". Only those paths are matched
+  against the per-project buckets: the panel answers "how much did THIS open
+  project cost this month", not "name every repository that ever ran".
+#>
+function Get-HerdrOpenProjects {
+  [CmdletBinding()]
+  param([string]$AppDataDir)
+
+  $result = [pscustomobject]@{ Ok = $false; Projects = @(); Error = "" }
+
+  if (-not $AppDataDir) { $AppDataDir = $env:APPDATA }
+  if (-not $AppDataDir) { $result.Error = "no APPDATA"; return $result }
+
+  $path = [System.IO.Path]::Combine($AppDataDir, "herdr", "session.json")
+  if (-not [System.IO.File]::Exists($path)) {
+    $result.Error = "herdr session not found: $path"
+    return $result
+  }
+
+  try {
+    $parsed = ([System.IO.File]::ReadAllText($path)) | ConvertFrom-Json
+    if ($null -eq $parsed -or $null -eq $parsed.workspaces) {
+      $result.Error = "no workspaces in " + [System.IO.Path]::GetFileName($path)
+      return $result
+    }
+
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $projects = @()
+    foreach ($ws in @($parsed.workspaces)) {
+      $cwd = [string]$ws.identity_cwd
+      if (-not $cwd) { continue }
+      $norm = Normalize-AgentProjectPath $cwd
+      if (-not $norm) { continue }
+      if (-not $seen.Add($norm)) { continue }
+      $name = [System.IO.Path]::GetFileName($norm)
+      if (-not $name) { $name = $norm }
+      $projects += [pscustomobject]@{ Path = $norm; Name = $name }
+    }
+    $result.Ok = $true
+    $result.Projects = $projects
+  } catch {
+    $result.Error = Get-AgentFirstLine $_.Exception.Message
+  }
+  return $result
+}
+
+<#
+.SYNOPSIS
+  Every *.jsonl under a tree, newest by last-write first. Same enumeration
+  strategy as Get-NewestAgentSessionFile, measured 76 ms over claude's 551.
+#>
+function Get-AgentHistoryFiles {
+  [CmdletBinding()]
+  param([string]$Root)
+
+  $files = @()
+  if (-not $Root -or -not [System.IO.Directory]::Exists($Root)) { return $files }
+  try {
+    foreach ($path in [System.IO.Directory]::EnumerateFiles($Root, "*.jsonl", [System.IO.SearchOption]::AllDirectories)) {
+      $files += [pscustomobject]@{
+        Path             = $path
+        LastWriteTimeUtc = [System.IO.File]::GetLastWriteTimeUtc($path)
+      }
+    }
+  } catch { return @() }
+  return @($files | Sort-Object LastWriteTimeUtc -Descending)
+}
+
+# One counting bucket for month-level or project-level totals. Model keeps the
+# LAST real model seen (never a bracketed placeholder), which is the model the
+# estimate gets priced at.
+function New-AgentHistoryBucket {
+  return [pscustomobject]@{
+    Input = 0; Output = 0; CacheRead = 0; CacheWrite = 0; Reasoning = 0
+    Entries = 0; Model = ""
+  }
+}
+
+# The result shape every history reader fills in. MonthCost is $null until a
+# cost or an estimate exists; MonthEstimated tells the panel to mark it.
+function New-AgentHistoryResult {
+  [CmdletBinding()]
+  param([string]$Agent, [string]$Format)
+
+  return [pscustomobject]@{
+    Agent = $Agent; Format = $Format; Ok = $false; Approximate = $false
+    Detail = ""; Error = ""
+    MonthTokens = 0; MonthCost = $null; MonthEstimated = $false
+    MonthEntries = 0; MonthModel = ""
+    Projects = @()
+  }
+}
+
+<#
+.SYNOPSIS
+  Month-to-date claude history: every *.jsonl under .claude\projects.
+
+.DESCRIPTION
+  Subagent files ARE billed, so every file counts, not just the live one. The
+  per-file duplicate rejection is the same as the live reader (the store keeps
+  more than one copy of many assistant messages). Month attribution uses
+  entry.timestamp (UTC); cwd comes from entry.cwd. Money is the official-price
+  estimate for the last real model seen in each bucket, never a store cost.
+#>
+function Get-ClaudeAgentHistory {
+  [CmdletBinding()]
+  param(
+    [string]$ClaudeDir,
+    [long]$MaxBytes = 0
+  )
+
+  $budget = if ($MaxBytes -gt 0) { $MaxBytes } else { [long]$script:UsageHistoryMaxBytes }
+  $result = New-AgentHistoryResult -Agent "claude" -Format "claude-jsonl"
+
+  if (-not $ClaudeDir) { $ClaudeDir = (Resolve-AgentUsagePaths).ClaudeDir }
+  if (-not $ClaudeDir) { $result.Error = "no home directory"; return $result }
+  if (-not [System.IO.Directory]::Exists($ClaudeDir)) { $result.Error = "missing directory: $ClaudeDir"; return $result }
+
+  $files = Get-AgentHistoryFiles -Root $ClaudeDir
+  if (@($files).Count -eq 0) { $result.Error = "no session files under $ClaudeDir"; return $result }
+
+  $monthStart = Get-AgentMonthStartLocal
+  $month = New-AgentHistoryBucket
+  $projects = @{}
+  $dropped = 0
+  $remaining = $budget
+  $scannedBytes = 0
+  $filesScanned = 0
+
+  foreach ($file in @($files)) {
+    if ($remaining -le 0) { break }
+    $filesScanned++
+    $state = $null
+    try {
+      $state = Read-AgentSessionLines -Path $file.Path -PreFilter @('"usage"') -MaxBytes $remaining
+    } catch { continue }
+    $dropped += $state.Dropped
+    $scannedBytes += $state.ScannedBytes
+    $remaining -= $state.ScannedBytes
+
+    # Dedupe is per file: the same requestId can (and does) appear in more than
+    # one session file, and those are separate billable events.
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $fileModel = ""
+    $touched = @{}
+    foreach ($line in $state.Lines) {
+      $textKey = ""
+      $keyMatch = $script:UsageRequestIdPattern.Match($line)
+      if ($keyMatch.Success) { $textKey = $keyMatch.Groups[1].Value }
+      else {
+        $idMatch = $script:UsageMessageIdPattern.Match($line)
+        if ($idMatch.Success) { $textKey = $idMatch.Groups[1].Value }
+        else {
+          $uuidMatch = $script:UsageUuidPattern.Match($line)
+          if ($uuidMatch.Success) { $textKey = $uuidMatch.Groups[1].Value }
+        }
+      }
+      if ($textKey -and $seen.Contains($textKey)) { continue }
+
+      $entry = $null
+      try { $entry = $line | ConvertFrom-Json } catch { continue }
+      if ($null -eq $entry) { continue }
+
+      $usage = $null
+      if ($null -ne $entry.message -and $null -ne $entry.message.usage) { $usage = $entry.message.usage }
+      elseif ($null -ne $entry.usage) { $usage = $entry.usage }
+      if ($null -eq $usage) { continue }
+
+      $key = [string]$entry.requestId
+      if (-not $key -and $null -ne $entry.message) { $key = [string]$entry.message.id }
+      if (-not $key) { $key = [string]$entry.uuid }
+      if ($key) { if (-not $seen.Add($key)) { continue } }
+
+      $inMonth = $false
+      $ts = ConvertFrom-AgentTimestamp ([string]$entry.timestamp)
+      if ($null -ne $ts) { $inMonth = ($ts -ge $monthStart) }
+      $cwd = Normalize-AgentProjectPath ([string]$entry.cwd)
+
+      $model = ""
+      if ($null -ne $entry.message -and $entry.message.model) {
+        $model = ([string]$entry.message.model).Trim()
+        if ($model.StartsWith("<")) { $model = "" }
+      }
+      if ($model) { $fileModel = $model }
+
+      $input = Get-AgentInt64 $usage "input_tokens"
+      $output = Get-AgentInt64 $usage "output_tokens"
+      $cacheRead = Get-AgentInt64 $usage "cache_read_input_tokens"
+      $cacheWrite = Get-AgentInt64 $usage "cache_creation_input_tokens"
+      $reasoning = 0
+      if ($null -ne $usage.output_tokens_details) {
+        $reasoning = Get-AgentInt64 $usage.output_tokens_details "thinking_tokens"
+      }
+
+      if ($inMonth) {
+        $month.Entries++
+        $month.Input += $input
+        $month.Output += $output
+        $month.CacheRead += $cacheRead
+        $month.CacheWrite += $cacheWrite
+        $month.Reasoning += $reasoning
+      }
+
+      if ($cwd) {
+        if (-not $projects.ContainsKey($cwd)) { $projects[$cwd] = New-AgentHistoryBucket }
+        $bucket = $projects[$cwd]
+        $bucket.Entries++
+        $bucket.Input += $input
+        $bucket.Output += $output
+        $bucket.CacheRead += $cacheRead
+        $bucket.CacheWrite += $cacheWrite
+        $bucket.Reasoning += $reasoning
+        $touched[$cwd] = $true
+      }
+    }
+
+    # Model attribution is per file (last real model seen inside a file wins) and
+    # first across files: files are scanned newest first, so the NEWEST file that
+    # names a model prices the month and every project this file touched. Without
+    # the ordering guard, the oldest file in the window would overwrite the model
+    # with a stale (or empty) value.
+    if ($fileModel) {
+      if (-not $month.Model) { $month.Model = $fileModel }
+      foreach ($touchedKey in $touched.Keys) {
+        $bucket = $projects[$touchedKey]
+        if (-not $bucket.Model) { $bucket.Model = $fileModel }
+      }
+    }
+  }
+
+  if ($filesScanned -eq 0) { $result.Error = "no session files readable under $ClaudeDir"; return $result }
+
+  $result.Ok = $true
+  $result.MonthTokens = $month.Output
+  $result.MonthEntries = $month.Entries
+  if ($month.Entries -gt 0) {
+    $est = Get-AgentEstimatedCost -Model $month.Model -InputTokens $month.Input -OutputTokens $month.Output -CacheReadTokens $month.CacheRead -CacheWriteTokens $month.CacheWrite
+    if ($est.Estimated) { $result.MonthCost = $est.Amount; $result.MonthEstimated = $true; $result.MonthModel = $est.Model }
+  }
+
+  $projectsOut = @()
+  foreach ($key in $projects.Keys) {
+    $bucket = $projects[$key]
+    $est = Get-AgentEstimatedCost -Model $bucket.Model -InputTokens $bucket.Input -OutputTokens $bucket.Output -CacheReadTokens $bucket.CacheRead -CacheWriteTokens $bucket.CacheWrite
+    $name = [System.IO.Path]::GetFileName($key)
+    if (-not $name) { $name = $key }
+    $projectsOut += [pscustomobject]@{
+      Path = $key; Name = $name
+      Input = $bucket.Input; Output = $bucket.Output
+      CacheRead = $bucket.CacheRead; CacheWrite = $bucket.CacheWrite
+      Reasoning = $bucket.Reasoning; Entries = $bucket.Entries; Model = $bucket.Model
+      Cost = $(if ($est.Estimated) { $est.Amount } else { $null })
+      Estimated = $est.Estimated
+    }
+  }
+  $result.Projects = @($projectsOut | Sort-Object Output -Descending)
+
+  $result.Detail = ("mes + {0} proyectos - {1} archivos, {2} bytes" -f @($result.Projects).Count, $filesScanned, $scannedBytes)
+  if ($dropped -gt 0 -or $remaining -le 0) {
+    $result.Approximate = $true
+    $result.Detail = $result.Detail + (" - aproximada: lineas fuera del presupuesto de {0} MB" -f [int]($budget / 1MB))
+  }
+  return $result
+}
+
+<#
+.SYNOPSIS
+  Month-to-date codex history: every *.jsonl under .codex\sessions.
+
+.DESCRIPTION
+  Per session file the LAST counter record wins, exactly like the live reader,
+  and both cumulative shapes count: token_usage_record
+  (payload.turn_token_usage) and the terminal token_count
+  (payload.info.total_token_usage). Month attribution uses the last record's
+  root timestamp (file mtime when missing): a session is billed to the month it
+  ENDED. cwd comes from the last turn_context record seen. Money is the
+  official-price estimate, with OpenAI's cached-subtract rule applied.
+#>
+function Get-CodexAgentHistory {
+  [CmdletBinding()]
+  param(
+    [string]$CodexDir,
+    [long]$MaxBytes = 0
+  )
+
+  $budget = if ($MaxBytes -gt 0) { $MaxBytes } else { [long]$script:UsageHistoryMaxBytes }
+  $result = New-AgentHistoryResult -Agent "codex" -Format "codex-jsonl"
+
+  if (-not $CodexDir) { $CodexDir = (Resolve-AgentUsagePaths).CodexDir }
+  if (-not $CodexDir) { $result.Error = "no home directory"; return $result }
+  if (-not [System.IO.Directory]::Exists($CodexDir)) { $result.Error = "missing directory: $CodexDir"; return $result }
+
+  $files = Get-AgentHistoryFiles -Root $CodexDir
+  if (@($files).Count -eq 0) { $result.Error = "no session files under $CodexDir"; return $result }
+
+  $monthStart = Get-AgentMonthStartLocal
+  $month = New-AgentHistoryBucket
+  $projects = @{}
+  $dropped = 0
+  $remaining = $budget
+  $scannedBytes = 0
+  $filesScanned = 0
+  $noCwd = 0
+
+  foreach ($file in @($files)) {
+    if ($remaining -le 0) { break }
+    $filesScanned++
+    $state = $null
+    try {
+      # Counters live on token_usage lines; cwd on turn_context lines; the model
+      # on session_meta / turn_context lines. All three are worth a parse.
+      $state = Read-AgentSessionLines -Path $file.Path -PreFilter @("token_usage", '"cwd"', '"model"') -MaxBytes $remaining
+    } catch { continue }
+    $dropped += $state.Dropped
+    $scannedBytes += $state.ScannedBytes
+    $remaining -= $state.ScannedBytes
+
+    $lastUsage = $null
+    $lastStamp = $null
+    $fileCwd = ""
+    $fileModel = ""
+    foreach ($line in $state.Lines) {
+      $entry = $null
+      try { $entry = $line | ConvertFrom-Json } catch { continue }
+      if ($null -eq $entry -or $null -eq $entry.payload) { continue }
+      $payload = $entry.payload
+
+      if ($payload.cwd) { $fileCwd = Normalize-AgentProjectPath ([string]$payload.cwd) }
+      if ($payload.model) {
+        $model = ([string]$payload.model).Trim()
+        if ($model -and -not $model.StartsWith("<")) { $fileModel = $model }
+      }
+
+      $usage = $null
+      if ($null -ne $payload.turn_token_usage) { $usage = $payload.turn_token_usage }
+      elseif ($null -ne $payload.info -and $null -ne $payload.info.total_token_usage) { $usage = $payload.info.total_token_usage }
+      elseif ($null -ne $payload.usage) { $usage = $payload.usage }
+      if ($null -eq $usage) { continue }
+
+      $lastUsage = $usage
+      $lastStamp = ConvertFrom-AgentTimestamp ([string]$entry.timestamp)
+    }
+
+    if ($null -eq $lastUsage) { continue }
+
+    $stamp = $lastStamp
+    if ($null -eq $stamp) { $stamp = $file.LastWriteTimeUtc.ToLocalTime() }
+    $inMonth = ($stamp -ge $monthStart)
+
+    $input = Get-AgentInt64 $lastUsage "input_tokens"
+    $output = Get-AgentInt64 $lastUsage "output_tokens"
+    $cachedInput = Get-AgentInt64 $lastUsage "cached_input_tokens"
+    $cacheWrite = Get-AgentInt64 $lastUsage "cache_write_input_tokens"
+    $reasoning = Get-AgentInt64 $lastUsage "reasoning_output_tokens"
+
+    if ($inMonth) {
+      $month.Entries++
+      $month.Input += $input
+      $month.Output += $output
+      $month.CacheRead += $cachedInput
+      $month.CacheWrite += $cacheWrite
+      $month.Reasoning += $reasoning
+      # Files are scanned newest first: the NEWEST file that names a model wins,
+      # so an older session cannot overwrite the pricing model.
+      if (-not $month.Model -and $fileModel) { $month.Model = $fileModel }
+    }
+
+    if ($fileCwd) {
+      if (-not $projects.ContainsKey($fileCwd)) { $projects[$fileCwd] = New-AgentHistoryBucket }
+      $bucket = $projects[$fileCwd]
+      $bucket.Entries++
+      $bucket.Input += $input
+      $bucket.Output += $output
+      $bucket.CacheRead += $cachedInput
+      $bucket.CacheWrite += $cacheWrite
+      $bucket.Reasoning += $reasoning
+      if (-not $bucket.Model -and $fileModel) { $bucket.Model = $fileModel }
+    } else {
+      $noCwd++
+    }
+  }
+
+  if ($filesScanned -eq 0) { $result.Error = "no session files readable under $CodexDir"; return $result }
+
+  $result.Ok = $true
+  $result.MonthTokens = $month.Output
+  $result.MonthEntries = $month.Entries
+  if ($month.Entries -gt 0) {
+    $uncached = [Math]::Max(0, $month.Input - $month.CacheRead)
+    $est = Get-AgentEstimatedCost -Model $month.Model -InputTokens $uncached -OutputTokens $month.Output -CacheReadTokens $month.CacheRead -CacheWriteTokens $month.CacheWrite
+    if ($est.Estimated) { $result.MonthCost = $est.Amount; $result.MonthEstimated = $true; $result.MonthModel = $est.Model }
+  }
+
+  $projectsOut = @()
+  foreach ($key in $projects.Keys) {
+    $bucket = $projects[$key]
+    $uncached = [Math]::Max(0, $bucket.Input - $bucket.CacheRead)
+    $est = Get-AgentEstimatedCost -Model $bucket.Model -InputTokens $uncached -OutputTokens $bucket.Output -CacheReadTokens $bucket.CacheRead -CacheWriteTokens $bucket.CacheWrite
+    $name = [System.IO.Path]::GetFileName($key)
+    if (-not $name) { $name = $key }
+    $projectsOut += [pscustomobject]@{
+      Path = $key; Name = $name
+      Input = $bucket.Input; Output = $bucket.Output
+      CacheRead = $bucket.CacheRead; CacheWrite = $bucket.CacheWrite
+      Reasoning = $bucket.Reasoning; Entries = $bucket.Entries; Model = $bucket.Model
+      Cost = $(if ($est.Estimated) { $est.Amount } else { $null })
+      Estimated = $est.Estimated
+    }
+  }
+  $result.Projects = @($projectsOut | Sort-Object Output -Descending)
+
+  $result.Detail = ("mes + {0} proyectos - {1} archivos, {2} bytes" -f @($result.Projects).Count, $filesScanned, $scannedBytes)
+  if ($noCwd -gt 0) { $result.Detail = $result.Detail + (" - {0} sesiones sin cwd atribuible" -f $noCwd) }
+  if ($dropped -gt 0 -or $remaining -le 0) {
+    $result.Approximate = $true
+    $result.Detail = $result.Detail + (" - aproximada: lineas fuera del presupuesto de {0} MB" -f [int]($budget / 1MB))
+  }
+  return $result
+}
+
+# The month SELECT. The start instant is a computed int64 injected by the
+# reader; the literal ">= 0" is replaced with ">= <ms>" before running, which
+# keeps the statement free of double quotes (PowerShell 5.1 native marshalling)
+# and free of untrusted input.
+$script:UsageHistoryMonthSql = @'
+SELECT COALESCE(SUM(tokens_input), 0),
+       COALESCE(SUM(tokens_output), 0),
+       COALESCE(SUM(tokens_reasoning), 0),
+       COALESCE(SUM(tokens_cache_read), 0),
+       COALESCE(SUM(tokens_cache_write), 0),
+       COALESCE(SUM(cost), 0),
+       COUNT(*)
+FROM session WHERE time_updated >= 0
+'@ -replace "`r?`n", " "
+
+# The per-project SELECT: one row per canonical project root, this month's
+# totals. project.worktree is the canonical repo root, which is the same shape
+# Herdr's identity_cwd normalizes to.
+$script:UsageHistoryProjectSql = @'
+SELECT p.worktree,
+       COALESCE(SUM(s.tokens_input), 0),
+       COALESCE(SUM(s.tokens_output), 0),
+       COALESCE(SUM(s.cost), 0),
+       COUNT(*)
+FROM session s JOIN project p ON s.project_id = p.id
+WHERE s.time_updated >= 0
+GROUP BY p.worktree
+ORDER BY 3 DESC
+'@ -replace "`r?`n", " "
+
+<#
+.SYNOPSIS
+  Month-to-date opencode history out of its own SQLite store.
+
+.DESCRIPTION
+  Two indexed SELECTs through Read-SqliteQuery: one totals the month (sessions
+  with time_updated >= month start) and one splits the same window per
+  project.worktree. Money is REAL - session.cost as recorded, 0 is a real zero
+  for a local model - so Estimated stays false and the estimator is never asked.
+#>
+function Get-OpenCodeAgentHistory {
+  [CmdletBinding()]
+  param(
+    [string]$DatabasePath,
+    [int]$BusyTimeoutMs = 1200
+  )
+
+  $result = New-AgentHistoryResult -Agent "opencode" -Format "sqlite"
+
+  if (-not $DatabasePath) { $DatabasePath = (Resolve-AgentUsagePaths).OpenCodeDb }
+  $result.Detail = [System.IO.Path]::GetFileName($DatabasePath)
+
+  if (-not [System.IO.File]::Exists($DatabasePath)) {
+    $result.Error = "database not found: $DatabasePath"
+    return $result
+  }
+
+  $lib = [System.IO.Path]::Combine($PSScriptRoot, "Read-SqliteQuery.ps1")
+  if (-not [System.IO.File]::Exists($lib)) {
+    $result.Error = "SQLite reader not found: $lib"
+    return $result
+  }
+  . $lib
+
+  $monthStart = Get-AgentMonthStartLocal
+  $startMs = 0
+  try {
+    $startMs = ([DateTimeOffset]::new($monthStart.ToUniversalTime(), [TimeSpan]::Zero)).ToUnixTimeMilliseconds()
+  } catch {
+    $result.Error = Get-AgentFirstLine $_.Exception.Message
+    return $result
+  }
+  $monthSql = $script:UsageHistoryMonthSql.Replace(">= 0", ">= " + $startMs.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+  $projectSql = $script:UsageHistoryProjectSql.Replace(">= 0", ">= " + $startMs.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+
+  $query = $null
+  try {
+    $query = Invoke-SqliteQuery -DatabasePath $DatabasePath -Sql $monthSql -BusyTimeoutMs $BusyTimeoutMs
+  } catch {
+    $result.Error = Get-AgentFirstLine $_.Exception.Message
+    return $result
+  }
+  if (-not $query.Ok) { $result.Error = Get-AgentFirstLine $query.Error; return $result }
+
+  $result.Ok = $true
+  $rows = @($query.Rows)
+  if ($rows.Count -gt 0) {
+    $row = $rows[0]
+    $sessions = [int64]$row[6]
+    $result.MonthTokens = [int64]$row[1]
+    $result.MonthEntries = $sessions
+    if ($sessions -gt 0) {
+      $cost = 0.0
+      if ([double]::TryParse(([string]$row[5]), [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$cost)) {
+        $result.MonthCost = $cost
+        $result.MonthEstimated = $false
+      }
+    }
+  }
+
+  $pquery = $null
+  try {
+    $pquery = Invoke-SqliteQuery -DatabasePath $DatabasePath -Sql $projectSql -BusyTimeoutMs $BusyTimeoutMs
+  } catch {
+    $result.Error = Get-AgentFirstLine $_.Exception.Message
+    return $result
+  }
+  if (-not $pquery.Ok) { $result.Error = Get-AgentFirstLine $pquery.Error; return $result }
+
+  $projectsOut = @()
+  foreach ($row in @($pquery.Rows)) {
+    $key = Normalize-AgentProjectPath ([string]$row[0])
+    if (-not $key) { continue }
+    $name = [System.IO.Path]::GetFileName($key)
+    if (-not $name) { $name = $key }
+    $cost = $null
+    $costText = ([string]$row[3]).Trim()
+    if ($costText) {
+      $parsed = 0.0
+      if ([double]::TryParse($costText, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) { $cost = $parsed }
+    }
+    $projectsOut += [pscustomobject]@{
+      Path = $key; Name = $name
+      Input = [int64]$row[1]; Output = [int64]$row[2]
+      CacheRead = 0; CacheWrite = 0
+      Reasoning = 0; Entries = [int64]$row[4]; Model = ""
+      Cost = $cost
+      Estimated = $false
+    }
+  }
+  $result.Projects = @($projectsOut | Sort-Object Output -Descending)
+
+  $result.Detail = ("mes + {0} proyectos - via {1}" -f @($result.Projects).Count, $query.Provider)
+  return $result
+}
+
+<#
+.SYNOPSIS
+  One snapshot of all three agents' history plus Herdr's open projects, for the
+  per-agent panel and the self test.
+
+.DESCRIPTION
+  Sequential, like Get-AgentUsageSnapshot: the scans are bounded by
+  UsageHistoryMaxBytes (8 MB) across all files per agent, newest first, and the
+  SQLite reads run with a busy timeout. A store that is missing, locked or
+  unparsable comes back as Ok = $false with the reason in Error, never as
+  zeroes; an empty month is "sin actividad", not a failure.
+#>
+function Get-AgentHistorySnapshot {
+  [CmdletBinding()]
+  param(
+    [string]$HomeDir,
+    [int]$BusyTimeoutMs = 1200,
+    [long]$MaxBytes = 0
+  )
+
+  $paths = Resolve-AgentUsagePaths -HomeDir $HomeDir
+
+  $agents = @()
+  $agents += Get-ClaudeAgentHistory -ClaudeDir $(if ($paths) { $paths.ClaudeDir } else { "" }) -MaxBytes $MaxBytes
+  $agents += Get-CodexAgentHistory -CodexDir $(if ($paths) { $paths.CodexDir } else { "" }) -MaxBytes $MaxBytes
+  $agents += Get-OpenCodeAgentHistory -DatabasePath $(if ($paths) { $paths.OpenCodeDb } else { "" }) -BusyTimeoutMs $BusyTimeoutMs
+
+  $herdr = Get-HerdrOpenProjects
+  $monthStart = Get-AgentMonthStartLocal
+
+  return [pscustomobject]@{
+    TakenAt    = Get-Date
+    MonthStart = $monthStart
+    MonthLabel = $script:AgentMonthNames[[int]$monthStart.Month - 1]
+    Herdr      = $herdr
+    Agents     = $agents
+  }
 }
