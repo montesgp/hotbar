@@ -1,9 +1,96 @@
 # Feature: hotbar-widget — barra flotante de Windows siempre-encima (giro completo, 2026-09-26)
 
-Status: **batch HB12-HB17 cerrado salvo HB17 (rename manual)** — clip, precios oficiales,
-histórico por agente (mes + proyectos) y acciones `agent-usage:<agente>` implementados,
-verificados y PUSHEADOS a `origin/main` (autorizado tras docs; rango `486dcca..69c1fb2`).
-Pendiente solo: rename local del folder a mano tras cerrar la sesión y verificación visual.
+Status: **FASE 2 ABIERTA — port a Tauri 2 (cross-platform)**. Decisión de stack del usuario
+(2026-09-27): **Tauri 2 (Rust + webview)**; la estética WPF actual prevalece como theme
+`classic` por defecto. V1 cerrado salvo HB17 (rename manual). Pendiente: toolchain Rust en
+esta máquina (cargo/rustc ausentes) antes de escalar el scaffold.
+
+## Fase 2 — Port a Tauri 2 (Windows + Ubuntu + macOS)
+
+Razón (decisión usuario 2026-09-27): el producto debe garantizar funcionamiento en Windows,
+Ubuntu y macOS; WPF es Windows-only. La estética actual NO se rompe: se porta como theme
+`classic` (default) y el multi-theme + fontSize pasan a ser config real de producto en
+`config.json` (la fuente actual `PanelFontSize=10.0` es demasiado chica y no es configurable).
+
+Alcance del rebrand (leído del pedido, sin objeción del usuario): fuera toda referencia a
+**herdr** de la superficie del producto (plugin TUI + docs + dependencia
+`%APPDATA%\herdr\session.json`, sustituida por detección standalone de proyectos abiertos).
+Se CONSERVA la celda `omniroute` (gateway separado `montesgp/omniroute`, no herdr). Nombre:
+**hotbar**.
+
+Caveats verificados (fuentes oficiales; Wayland): en Ubuntu moderno (Wayland) el
+siempre-encima depende del compositor para CUALQUIER stack; X11/XWayland sí funciona;
+Windows/macOS bien. Tauri 2: `backgroundThrottling` no soportado en Linux/Windows;
+`noRedirectionBitmap` solo Windows. El puerto de datos (readers claude/codex/opencode,
+precios, agregación) se porta a Rust; rutas por OS (Windows `%USERPROFILE%`, Linux/macOS
+`~/.local/share` y `~/Library/…`).
+
+Distribución a usuarios (verificado docs Tauri v2 2026-09-27): los usuarios finales NO
+instalan Rust/MSVC — solo build-time. Binarios por GitHub Release:
+- Windows `-setup.exe`/`.msi` 1-clic; WebView2 preinstalado en Win11 / mayoría Win10;
+  bootstrapper ~2 MB descargado si falta (o `embedBootstrapper` +1.8 MB para Win10 viejas).
+- macOS `.dmg`/`.app` autocontenido (WKWebView del sistema); notarización futura opcional.
+- Linux `.deb` (apt resuelve `libwebkit2gtk-4.1-0` + `libgtk-3-0`) o **`.AppImage`
+  single-file** que empaqueta TODO: `chmod a+x` + doble clic, cero instalación.
+  Baseline glibc: buildear sobre Ubuntu 22.04 / Debian 12 (CI, Docker).
+
+TDD: no configurado en este proyecto (checks funcionales históricos: parse 0, ASCII 0,
+SelfTest). Para Fase 2: `cargo test` (readers/agregación) + build + smoke manual E2E.
+Delivery: forecast >> 400 líneas → strategy `ask-on-risk` (default, pendiente pregunta al
+first push). Route: subagent wall determinista ("free tier can only be used from within
+OpenCode") → implementación INLINE (se registrará el trigger de delegación no enrutable).
+
+### Checklist Fase 2 (IDs estables)
+- [x] HB18 — Toolchain Rust en Windows: rustup (stable, MSVC) + VS Build Tools C++ si falta
+  linker; verificar `cargo build` del scaffold. **HECHO 2026-09-27**: winget `Rustlang.Rustup`
+  1.29.1 → cargo/rustc 1.98.1 stable `x86_64-pc-windows-msvc`; `setup.exe modify --add
+  Microsoft.VisualStudio.Workload.NativeDesktop` (Exit 3010, UAC aprobado por el usuario) →
+  MSVC 14.51.36231 + Windows SDK 10.0.26100. Smoke: `cargo build` OK (0.95 s). Distribución
+  resuelta: binarios por Release, usuarios sin toolchain (HB27).
+- [x] HB19 — Scaffold Tauri 2 en `hotbar-tauri/` (estructura src/ + src-tauri/); ventana
+  transparente, siempre-encima, sin barra de tareas; right-center del monitor activo.
+  **HECHO 2026-09-27**: `npm create tauri-app@latest` — plantilla `vanilla-ts`, manager npm,
+  Tauri 2 (v2.12.0), identifier `com.hotbar.app`; `npm install` OK (0 vulns); `cargo build`
+  scaffold OK (2m40s primera / 12.3s incremental). Ventana en `tauri.conf.json`: label `main`,
+  title `hotbar`, 320×720, `resizable:false`, `decorations:false`, `transparent:true`,
+  `shadow:false`, `alwaysOnTop:true`, `skipTaskbar:true`. Posición right-center del monitor
+  activo (margen 24px) en `lib.rs` via `window.current_monitor()` + `set_position`.
+- [x] HB20 — Config v2: schema `config.json` con `theme` + `fontSize` + ítems; loader Rust
+  (serde_json); temas como datos (palette de tokens), no código. **HECHO 2026-09-27**:
+  `src-tauri/src/config.rs` — `AppConfig` (monitor/margin/collapsed/theme/fontSize/items),
+  `ThemePalette` + `palette_for()` (classic #101014/#3A3A44/#C8C8D4/#8A8A96/#3A3322/#E8C46A
+  radios 22/8; dark; fallback classic ante typo), loader crea `%APPDATA%\com.hotbar.app/
+  config.json` con defaults en primer arranque; comandos `get_config`/`save_config`.
+  Frontend vanilla-ts aplica palette como CSS vars (`--hb-*`), renderiza ítems; verificado
+  con la app real: esquina muestra wallpaper (transparencia), fondo #101014 y celdas #3A3A44
+  y texto #C8C8D4 muestreados por píxel. `npm run tauri build` produce `-setup.exe` 1.35 MiB
+  + `.msi` 2.01 MiB (distribución binaria real).
+- [ ] HB21 — Theme `classic` en CSS (default): silueta media luna, gradiente
+  `#232329→#101014`, borde `#3A3A44`, fg `#C8C8D4`, hover ámbar `#E8C46A`/`#3A3322`, glow,
+  radios 22/8; colapso flecha/chevron; drag multi-monitor con snap y persistencia.
+- [ ] HB22 — Celdas + acciones desde config v2: glifos/íconos, tooltips, hover glow;
+  acciones core `edit-config`, `run:<cmd>`; panel inline (área de contenido HTML).
+- [ ] HB23 — Readers en Rust (port de libs): claude/codex/opencode (jsonl/sqlite por OS),
+  precios oficiales, agregación mes+proyecto; detección standalone de proyectos abiertos
+  (sin `session.json` de herdr); panel `agent-usage` con refresco ~5 s.
+- [ ] HB24 — OmniRoute status sin netstat: probe HTTP al gateway local `127.0.0.1:20128`
+  (cross-platform); celdas UP/DOWN + combos; honesto `sin datos`.
+- [ ] HB25 — Rebrand/purge: fuera `herdr-plugin.toml`, `scripts/`, `extensions/` (a `legacy/`
+  o borrado, decisión menor al aplicar); README + docs hotbar sin herdr; verificación 0
+  referencias herdr en superficie.
+- [ ] HB26 — Verificación cross-platform: `cargo test` + build Windows; instrucciones Ubuntu
+  (`webkit2gtk`) y macOS (`brew`); checklist de smoke por OS; commit por unidad + push con docs
+  consistentes (directiva previa del usuario).
+- [ ] HB27 — CI release (GitHub Actions): build Windows + macOS + Linux (Linux sobre Ubuntu
+  22.04: `.deb` + `.AppImage`), artefactos attachados a GitHub Releases → el usuario se baja
+  el binario sin toolchain ("1 click").
+
+## Authorized scope (Fase 2)
+- Repo `hotbar` (carpeta local aún `herdr-omniroute`): nueva `hotbar-tauri/`; v1 `hotbar/`
+  queda intacto como referencia/rollback hasta que el port esté operativo.
+- NO tocar: configs de clientes, `~/.omniroute/.env`, node_modules, gentle-pi,
+  `odd/tasks/omniroute-autofallback.md`, ni los cambios runtime de `hotbar/config.json`
+  (drag re-persistió monitor `\\.\DISPLAY1` + re-indentado — no committear).
 
 > Este es el NUEVO rumbo del proyecto. El diseño previo (menú popup de Herdr, `herdr-hub.md`)
 > queda **descartado por decisión del usuario** (2026-09-26): "no es para nada lo que esperaba".

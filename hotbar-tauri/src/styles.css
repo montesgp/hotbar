@@ -1,0 +1,87 @@
+/*
+ * Hotbar — theme tokens arrive as CSS custom properties set by main.ts from
+ * the Rust ThemePalette (themes are data, never code). The :root block below
+ * is only a fallback so the page is not blank before get_config resolves.
+ */
+:root {
+  --hb-bg: #101014;
+  --hb-panel: #3a3a44;
+  --hb-text: #c8c8d4;
+  --hb-text-dim: #8a8a96;
+  --hb-hover-bg: #3a3322;
+  --hb-hover-fg: #e8c46a;
+  --hb-radius-bar: 22px;
+  --hb-radius-cell: 8px;
+  --hb-font-size: 10px;
+
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: var(--hb-font-size);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  background: transparent !important;
+  overflow: hidden;
+  user-select: none;
+}
+
+.bar {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  background: var(--hb-bg);
+  border-radius: var(--hb-radius-bar);
+  padding: 8px;
+}
+
+.cells {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--hb-radius-cell);
+  background: var(--hb-panel);
+  color: var(--hb-text);
+  font-size: var(--hb-font-size);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.cell:hover {
+  background: var(--hb-hover-bg);
+  color: var(--hb-hover-fg);
+}
+
+.cell .glyph {
+  width: 1.4em;
+  text-align: center;
+  font-size: 1.6em;
+}
+
+.cell .label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
