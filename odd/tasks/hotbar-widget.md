@@ -129,7 +129,16 @@ permite descolapsar. Reutilizable: las opciones y acciones se configuran en `hot
   Windows v1 (PS 5.1 + WPF); capa de datos desacoplada como único avance cross-platform;
   plugin Herdr como superficie legada opcional.
 - [ ] HB17 — Rename local del folder `herdr-omniroute` -> `hotbar` (solo al FINAL del batch;
-  git unaffected; re-verificar desde la nueva ruta).
+  git unaffected; re-verificar desde la nueva ruta). **BLOQUEADO en-sesión** (2026-09-27):
+  el host de la sesión tiene ese directorio como cwd, así que Windows rechaza el rename
+  (`RenameItemIOError`, proceso en uso). Pendiente de ejecutar A MANO tras cerrar esta
+  sesión:
+  ```powershell
+  Stop-Process -Id 25292 -Force   # detener el widget, si sigue vivo
+  Rename-Item "C:\repositories\personal\herdr-omniroute" "C:\repositories\personal\hotbar"
+  git -C "C:\repositories\personal\hotbar" status   # verificar desde la nueva ruta
+  powershell -File "C:\repositories\personal\hotbar\hotbar\launch-hotbar.ps1"   # relanzar
+  ```
 
 ## Authorized scope (confirmado)
 - Repo `hotbar` (antes herdr-omniroute): manifest de plugin, scripts/, docs/, hotbar/.
