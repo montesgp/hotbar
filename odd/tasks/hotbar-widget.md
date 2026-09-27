@@ -37,8 +37,10 @@ instalan Rust/MSVC — solo build-time. Binarios por GitHub Release:
 
 TDD: no configurado en este proyecto (checks funcionales históricos: parse 0, ASCII 0,
 SelfTest). Para Fase 2: `cargo test` (readers/agregación) + build + smoke manual E2E.
-Delivery: forecast >> 400 líneas → strategy `ask-on-risk` (default, pendiente pregunta al
-first push). Route: subagent wall determinista ("free tier can only be used from within
+Delivery: forecast >> 400 líneas → strategy `ask-on-risk`. **RESUELTO 2026-09-27** (running
+count 6850 + resto Fase 2): usuario eligió **Directo a main con exception** (política
+establecida del repo: commits por unidad en main, push con docs consistentes, sin PRs).
+Route: subagent wall determinista ("free tier can only be used from within
 OpenCode") → implementación INLINE (se registrará el trigger de delegación no enrutable).
 
 ### Checklist Fase 2 (IDs estables)
@@ -343,6 +345,10 @@ como hueco honesto) no requiere tocar código: es `config.json`.
 **no** se han incluido en ninguna de estas unidades.
 
 ## Progress notes
+- 2026-09-27 (entrega Fase 2 HB18-HB20): **push a `origin/main` hecho** (`3773986..1b2f0ce`
+  = `bd8f769` scaffold+config v2+README + `1b2f0ce` docs(odd) evidencia). Estrategia
+  `ask-on-risk` resuelta por el usuario: **Directo a main con exception** (política
+  establecida, sin PRs).
 - 2026-09-27 (batch Fase 2 HB18-HB20, commit `bd8f769`): toolchain instalada (winget,
   MSVC 14.51 + SDK 10.0.26100), scaffold Tauri 2 (`hotbar-tauri/`), config v2 + temas como
   datos, bundle real (setup.exe 1.35 MiB / msi 2.01 MiB). **RDD/assess**: risk **high**
