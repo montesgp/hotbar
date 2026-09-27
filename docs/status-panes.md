@@ -213,9 +213,11 @@ verificables (`herdr plugin action invoke herdr.omniroute.open-status-pane`).
 
 - **Generales (Herdr, user-global)** — este repo es la plantilla:
   - ✅ `herdr-omniroute` — estado del gateway OmniRoute (primer caso real).
-  - 🔜 **Output total** entre todos los proyectos: agregar CLI/socket de Herdr
-    (`herdr status`, sesiones/workspaces) + datos de los agentes → dashboard que sume
-    tokens/gasto por sesión y proyecto. El pane puede renderizar esa agregación igual que este.
+  - ✅ **Output/costo de agentes por proyecto** — entregado por el widget
+    [hotbar](hotbar.md): paneles por agente (claude/codex/opencode) con total del
+    mes, desglose por proyecto abierto y dinero honesto (`(est)` = estimado,
+    real en opencode). Un pane de Herdr podría renderizar la misma agregación
+    reusando los lectores de `hotbar/lib/Get-AgentUsage.ps1`.
   - 🔜 Plugins generales sobre el flujo (estado de scheduled tasks, recursos, git repos...).
 - **Por proyecto (pi)** — cuando se aborde, serán extensiones pi (como `extensions/omniroute.ts`),
   con footer/notify por agente; se mantienen fuera de este repo o en repos separados.
