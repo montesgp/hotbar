@@ -1,8 +1,9 @@
 # Feature: hotbar-widget — barra flotante de Windows siempre-encima (giro completo, 2026-09-26)
 
-Status: **batch HB12-HB17 casi cerrado** — clip, precios oficiales, histórico por agente
-(mes + proyectos) y acciones `agent-usage:<agente>` implementados y verificados; docs
-rebrand listas; pendiente push a `origin/main` (autorizado tras docs) y rename local.
+Status: **batch HB12-HB17 cerrado salvo HB17 (rename manual)** — clip, precios oficiales,
+histórico por agente (mes + proyectos) y acciones `agent-usage:<agente>` implementados,
+verificados y PUSHEADOS a `origin/main` (autorizado tras docs; rango `486dcca..69c1fb2`).
+Pendiente solo: rename local del folder a mano tras cerrar la sesión y verificación visual.
 
 > Este es el NUEVO rumbo del proyecto. El diseño previo (menú popup de Herdr, `herdr-hub.md`)
 > queda **descartado por decisión del usuario** (2026-09-26): "no es para nada lo que esperaba".
@@ -134,7 +135,7 @@ permite descolapsar. Reutilizable: las opciones y acciones se configuran en `hot
   (`RenameItemIOError`, proceso en uso). Pendiente de ejecutar A MANO tras cerrar esta
   sesión:
   ```powershell
-  Stop-Process -Id 25292 -Force   # detener el widget, si sigue vivo
+  Stop-Process -Id 19984 -Force   # detener el widget, si sigue vivo
   Rename-Item "C:\repositories\personal\herdr-omniroute" "C:\repositories\personal\hotbar"
   git -C "C:\repositories\personal\hotbar" status   # verificar desde la nueva ruta
   powershell -File "C:\repositories\personal\hotbar\hotbar\launch-hotbar.ps1"   # relanzar
@@ -235,7 +236,7 @@ celda abre el panel del mes + desglose por proyecto para ese agente. La celda `u
 global (glyph `0x0024`) abre el panel agregado. Cambiar una acción (o volver a `none`
 como hueco honesto) no requiere tocar código: es `config.json`.
 
-## Work units (commits en `main`, sin push)
+## Work units (commits en `main`, push `486dcca..69c1fb2` hecho 2026-09-27)
 
 | # | Commit | Unidad |
 | --- | --- | --- |
@@ -254,6 +255,23 @@ como hueco honesto) no requiere tocar código: es `config.json`.
 **no** se han incluido en ninguna de estas unidades.
 
 ## Progress notes
+- 2026-09-27 (cierre del batch HB12-HB17): push a `origin/main` ejecutado
+  (`486dcca..69c1fb2` = 7506192 fix sqlite reader reload, dfcb523 pricing, 2a6a223
+  per-agent month history, 5743257 per-agent action panels, ca04a3d docs rebrand,
+  a597505 docs(odd) evidencias, 69c1fb2 docs(odd) HB17 bloqueado). Widget relanzado
+  (pid 19984). **RDD/assess**: `mode status` = on (global). `review assess --base-ref
+  486dcca --committed-only` → risk **medium** (`configuration_change` en
+  `hotbar/config.json`), 10 paths / 2172 líneas, `review_due=true
+  (slice_budget_reached)`. Consent v3 presentado → **concedido**. START → transacción
+  `review-137027ec4af59e0f` (1 lens `review-reliability`, correction_budget 200). El
+  lens falló **antes de ejecutar**: "OpenCode's free tier can only be used from within
+  OpenCode" — mismo muro de provider que el batch previo (`review-53364d8fc1a9d3de`;
+  no transitorio, no es defecto de gentle-ai). Outcome registrado: **no disponible**;
+  transacción `review-137027ec4af59e0f` liberada vía `gentle-ai review abandon`
+  (operator_disposition, `status: committed`, a cuarentena
+  `review-137027ec4af59e0f-3000307671` — `captured_lens_results=[]`,
+  `findings_present=false`). El boundary NO avanza (nada reconocido); la entrega sigue
+  bajo política ordinaria con los controles funcionales ya pasados.
 - 2026-09-26 (batch 2 — implementación HB12-HB16): implementado inline y verificado.
   * **Clip HB12**: `Update-HotbarBarClip` con `::new()` tras diagnosticar que `New-Object`
     anidado dentro del constructor falla en PS 5.1 (caso C repro THREW; `::new()` OK).
