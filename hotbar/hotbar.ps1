@@ -133,6 +133,9 @@ $script:PanelOpen = $false
 # is the only writer of both, so the timer cannot outlive the panel it refreshes.
 $script:UsagePanelActive = $false
 $script:UsageTimer = $null
+# Agent panels (agent-usage:<agent>) are snapshot-only: they never own a refresh
+# timer. This flag just lets their toggle close the panel that is already open.
+$script:AgentPanelActive = $false
 $script:ActiveScreen = $null
 $script:Window = $null
 
@@ -176,7 +179,7 @@ foreach ($assembly in @("PresentationFramework", "PresentationCore", "WindowsBas
 # only checked for existence here: Get-OmniRouteCombos dot-sources it itself, and
 # loading it twice would re-parse 13 KB for nothing.
 $script:LibRoot = [System.IO.Path]::Combine($PSScriptRoot, "lib")
-foreach ($needed in @("Invoke-Native.ps1", "Get-OmniRouteStatus.ps1", "Get-OmniRouteCombos.ps1", "Read-SqliteQuery.ps1", "Get-AgentUsage.ps1")) {
+foreach ($needed in @("Invoke-Native.ps1", "Get-OmniRouteStatus.ps1", "Get-OmniRouteCombos.ps1", "Read-SqliteQuery.ps1", "Get-AgentUsage.ps1", "Get-AgentPricing.ps1")) {
   $path = [System.IO.Path]::Combine($script:LibRoot, $needed)
   if (-not [System.IO.File]::Exists($path)) {
     Write-Output ("hotbar: missing data helper " + $path)
@@ -187,6 +190,9 @@ foreach ($needed in @("Invoke-Native.ps1", "Get-OmniRouteStatus.ps1", "Get-OmniR
 . ([System.IO.Path]::Combine($script:LibRoot, "Get-OmniRouteStatus.ps1"))
 . ([System.IO.Path]::Combine($script:LibRoot, "Get-OmniRouteCombos.ps1"))
 . ([System.IO.Path]::Combine($script:LibRoot, "Get-AgentUsage.ps1"))
+# Pricing is dot-sourced explicitly (Get-AgentUsage uses it). It only defines
+# constants and functions, so loading it twice would only re-parse for nothing.
+. ([System.IO.Path]::Combine($script:LibRoot, "Get-AgentPricing.ps1"))
 
 # ---------------------------------------------------------------------------
 # The window markup. Single-quoted here-string: no PowerShell expansion touches it.
@@ -594,6 +600,68 @@ function Get-HotbarElement {
   return $element
 }
 
+<#
+.SYNOPSIS
+  Clips the item column to the bar's crescent outline.
+
+.DESCRIPTION
+  WPF Border does not clip its children to its CornerRadius: the rounded corners
+  are a paint, not a boundary, so anything the bar owns can spill past the bulge
+  into the transparent window area. The hover fill on the outer buttons did, and
+  a glow floating outside the crescent reads as a broken paint job.
+
+  The clip geometry is the actual silhouette, not a decoration. The original
+  sizing comment says the usable width at row y is
+  72 * sqrt(1 - ((y-200)/200)^2): that is the RIGHT half of an ellipse with
+  horizontal semi-axis 72 and vertical semi-axis 200, whose flat side is the
+  bar's right edge at x=72. The clip path traces that exactly: the rectangle
+  minus the arc from (0, h) back to (0, 0) through the bulge, swept clockwise
+  (bottom -> right -> top on a clock face). Running on ItemStackPanel -- the bar
+  column, always 72 wide regardless of the panel state -- keeps the inline panel
+  untouched, because the panel lives in the Auto column inside the same Border.
+
+  The call runs eagerly at construction AND on SizeChanged: the first paint happy
+  path reads a zero-size element if the window measures later, and the handler
+  catches the resize that layout produces.
+#>
+function Update-HotbarBarClip {
+  [CmdletBinding()]
+  param()
+
+  if ($null -eq $script:Window) { return }
+  $items = Get-HotbarElement -Window $script:Window -Name "ItemsPanel"
+  $w = [double]$items.ActualWidth
+  $h = [double]$items.ActualHeight
+  if ($w -le 0 -or $h -le 0) { return }
+
+  $geometry = [System.Windows.Media.PathGeometry]::new()
+  $figure = [System.Windows.Media.PathFigure]::new()
+  $figure.StartPoint = [System.Windows.Point]::new(0, 0)
+  $figure.IsClosed = $true
+
+  # ::new() everywhere, on purpose: New-Object nested inside another constructor's
+  # parentheses is parsed as a command argument list and its output becomes an
+  # Object[] that no Point/Size/LineSegment constructor can bind.
+  $edgeNw = [System.Windows.Point]::new(0, 0)
+  $edgeNe = [System.Windows.Point]::new($w, 0)
+  $edgeSe = [System.Windows.Point]::new($w, $h)
+  $edgeSw = [System.Windows.Point]::new(0, $h)
+  $size = [System.Windows.Size]::new($w, ($h / 2))
+  $top = [System.Windows.Media.LineSegment]::new($edgeNe, $false)
+  $right = [System.Windows.Media.LineSegment]::new($edgeSe, $false)
+  $bottom = [System.Windows.Media.LineSegment]::new($edgeSw, $false)
+  $arc = [System.Windows.Media.ArcSegment]::new($edgeNw, $size, 0, $false,
+    [System.Windows.Media.SweepDirection]::Clockwise, $false)
+
+  $null = $figure.Segments.Add($top)
+  $null = $figure.Segments.Add($right)
+  $null = $figure.Segments.Add($bottom)
+  $null = $figure.Segments.Add($arc)
+  $null = $geometry.Figures.Add($figure)
+  $geometry.Freeze()
+  $items.Clip = $geometry
+}
+
 function New-HotbarTextBlock {
   param(
     [string]$Text,
@@ -707,6 +775,7 @@ function New-HotbarWindow {
   # refresh is never left pointing at a window that no longer exists.
   $window.Add_Closed({
       $script:UsagePanelActive = $false
+      $script:AgentPanelActive = $false
       Stop-HotbarUsagePanelTimer
     })
 
@@ -731,6 +800,17 @@ function New-HotbarWindow {
     $bar.Visibility = [System.Windows.Visibility]::Visible
     $tab.Visibility = [System.Windows.Visibility]::Collapsed
   }
+
+  # Clip the item column to the crescent. Eager first, then on every resize: the
+  # happy-path first paint can arrive before layout, and the SizeChanged handler
+  # catches the resize that follows. Guarded on the element itself, so the
+  # Collapsed tab state (no bar at all) still wires a no-op.
+  $items = Get-HotbarElement -Window $window -Name "ItemsPanel"
+  $items.Add_SizeChanged({
+      param($sender, $eventArgs)
+      Update-HotbarBarClip
+    })
+  Update-HotbarBarClip
 
   Update-HotbarGeometry
   return $window
@@ -988,6 +1068,7 @@ function Set-HotbarPanelLines {
   $script:PanelOpen = $Open
   $script:UsagePanelActive = ($Open -and $Panel -eq "usage")
   if (-not $script:UsagePanelActive) { Stop-HotbarUsagePanelTimer }
+  $script:AgentPanelActive = ($Open -and $Panel.StartsWith("agent:"))
 
   if ($Open) {
     $panelBorder.Visibility = [System.Windows.Visibility]::Visible
@@ -1043,8 +1124,20 @@ function Format-HotbarCount {
 function Format-HotbarMoney {
   param($Cost)
 
-  if ($null -eq $Cost) { return "" }
-  return ("$" + ([double]$Cost).ToString("0.00", [System.Globalization.CultureInfo]::InvariantCulture))
+  try { $value = [double]$Cost } catch { return "" }
+  return "$" + $value.ToString("#,##0.00", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+# Compact token count for the agent-history panel: "158.3k" shares and "2.4M"
+# millions, with the dot thousands separator. Raw numbers stay under 5 chars in
+# the ranges these stores actually produce, which is what keeps a repo line from
+# overflowing the panel width.
+function Format-HotbarCompactCount {
+  param([double]$Value)
+
+  if ($Value -lt 1000) { return ([long]$Value).ToString([System.Globalization.CultureInfo]::InvariantCulture) }
+  if ($Value -lt 1000000) { return ($Value / 1000.0).ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture).Replace(".", ",") + "k" }
+  return ($Value / 1000000.0).ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture).Replace(".", ",") + "M"
 }
 
 <#
@@ -1082,8 +1175,12 @@ function Get-HotbarUsageLines {
   $lines += New-HotbarLine "Uso de sesion" $script:ColorGold 11 $true
 
   $takenAt = $null
+  $anyApprox = $false
+  $anyEst = $false
   foreach ($usage in $Snapshot) {
     if ($null -ne $usage.TakenAt -and $null -eq $takenAt) { $takenAt = $usage.TakenAt }
+    if ($usage.Approximate) { $anyApprox = $true }
+    if ($usage.Estimated) { $anyEst = $true }
 
     if (-not $usage.Ok) {
       $lines += New-HotbarLine ("  " + $usage.Agent) $script:ColorGold 10 $true
@@ -1113,8 +1210,19 @@ function Get-HotbarUsageLines {
     if ($null -eq $usage.Cost) {
       $lines += New-HotbarLine "  costo: sin datos" $script:ColorDim 9
     } else {
-      $lines += New-HotbarLine ("  " + (Format-HotbarMoney $usage.Cost)) $script:ColorUp 10 $true
+      $money = Format-HotbarMoney $usage.Cost
+      if ($usage.Estimated) { $money = $money + " (est)" }
+      $lines += New-HotbarLine ("  " + $money) $script:ColorUp 10 $true
     }
+  }
+
+  # Both markers need a legend or they read as typos. The ~ sits right after the
+  # agent name (a trim from the right would eat it); (est) hangs off the money.
+  if ($anyApprox) {
+    $lines += New-HotbarLine (Format-HotbarLine "  ~ = lectura parcial") $script:ColorDim 9
+  }
+  if ($anyEst) {
+    $lines += New-HotbarLine (Format-HotbarLine "  (est) = costo estimado") $script:ColorDim 9
   }
 
   $lines += New-HotbarLine "" $script:ColorDim 5
@@ -1203,6 +1311,194 @@ function Toggle-HotbarUsagePanel {
   Start-HotbarUsagePanelTimer
 }
 
+<#
+.SYNOPSIS
+  Draws one month-to-date history panel for a single agent.
+
+.DESCRIPTION
+  One read of the stores, rendered over the projects Herdr currently has open:
+
+    claude sep
+      mes: out 158.3k  $28.17 (est)
+      incoders-commerce 149.9k  $27.37 (est)
+      herdr-omniroute: sin datos
+      (est) = costo estimado
+      click de nuevo para cerrar
+
+  Money is honest about what it is: claude/codex stores keep no cost field, so
+  their cost here is the official-price estimate and is marked (est); opencode
+  stores a cost and its local model really is $0.00. A project shows "sin datos"
+  when no session in the read budget touched it, or "costo: sin datos" when it
+  had tokens but no price could be applied (unknown model). A "-" after a session
+  count marks an approximate read: the Detail carried by the snapshot says how
+  much of the budget was spent, and the panel never presents the sample as the
+  total.
+
+  The read is snapshot-only: unlike the live usage panel there is no timer, so
+  the numbers are what the store said at click time and stay until the next
+  click. This is the same contract as the OmniRoute panel.
+#>
+function Get-HotbarAgentLines {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][string]$Agent,
+    [long]$MaxBytes = 0
+  )
+
+  $snapshot = Get-AgentHistorySnapshot -MaxBytes $MaxBytes
+  # The local is deliberately NOT named $agent: PowerShell variables are
+  # case-insensitive, so "$agent = $null" would overwrite the [string] $Agent
+  # parameter (coercing it to "" because of the type) and the comparison below
+  # would never match. This is the same trap that made the first revision
+  # render every agent as "sin datos".
+  $matched = $null
+  foreach ($candidate in @($snapshot.Agents)) {
+    if ($candidate.Agent -eq $Agent) { $matched = $candidate; break }
+  }
+
+  $lines = @()
+  if ($null -eq $matched) {
+    $lines += New-HotbarLine ("  " + $Agent) $script:ColorGold 10 $true
+    $lines += New-HotbarErrorLine ("unknown agent: " + $Agent)
+    return $lines
+  }
+
+  # The ~ marker sits right after the name for the same reason as in the live
+  # panel: a trim from the right must never eat it.
+  $approx = ""
+  if ($matched.Approximate) { $approx = "~ " }
+  $lines += New-HotbarLine ("  " + $matched.Agent + $approx + $snapshot.MonthLabel) $script:ColorGold 10 $true
+
+  if ($matched.MonthEntries -le 0) {
+    $lines += New-HotbarLine "  mes: sin datos" $script:ColorDim 9
+  } else {
+    $month = "  mes: out " + (Format-HotbarCompactCount $matched.MonthTokens)
+    if ($null -ne $matched.MonthCost) {
+      $money = Format-HotbarMoney $matched.MonthCost
+      if ($matched.MonthEstimated) { $money = $money + " (est)" }
+      $month = $month + "  " + $money
+    } else {
+      $month = $month + "  costo: sin datos"
+    }
+    $lines += New-HotbarLine (Format-HotbarLine $month) $script:ColorText
+  }
+
+  $anyEst = $false
+  if ($matched.MonthEstimated) { $anyEst = $true }
+  foreach ($herdr in @($snapshot.Herdr.Projects)) {
+    $project = Find-HotbarAgentProject -Agent $matched -HerdrPath $herdr.Path
+    if ($null -eq $project) {
+      $lines += New-HotbarLine (Format-HotbarLine ("  " + $herdr.Name + ": sin datos")) $script:ColorDim 9
+      continue
+    }
+
+    $text = "  " + $herdr.Name + " " + (Format-HotbarCompactCount $project.Output)
+    $lines += New-HotbarLine (Format-HotbarLine $text) $script:ColorText
+
+    if ($null -ne $project.Cost) {
+      $money = Format-HotbarMoney $project.Cost
+      if ($project.Estimated) { $money = $money + " (est)"; $anyEst = $true }
+      $lines += New-HotbarLine (Format-HotbarLine ("  " + $money)) $script:ColorUp 10 $true
+    } else {
+      $lines += New-HotbarLine "  costo: sin datos" $script:ColorDim 9
+    }
+  }
+
+  if ($anyEst) {
+    $lines += New-HotbarLine (Format-HotbarLine "  (est) = costo estimado") $script:ColorDim 9
+  }
+  $lines += New-HotbarLine (Format-HotbarLine "  click de nuevo para cerrar") $script:ColorDim 9
+  return $lines
+}
+
+# The bucket whose normalized path IS the Herdr repo root, or whose path is a
+# subdirectory of it. A repo row must not say "sin datos" while a session ran in
+# a subfolder (for example Commerce.Web under incoders-commerce): both belong to
+# the same open project, so the subdirectory buckets are summed into it.
+function Find-HotbarAgentProject {
+  [CmdletBinding()]
+  param($Agent, [string]$HerdrPath)
+
+  $root = Normalize-AgentProjectPath $HerdrPath
+  if (-not $root) { return $null }
+  $prefix = $root + "\"
+
+  $matched = @()
+  foreach ($project in @($Agent.Projects)) {
+    $path = Normalize-AgentProjectPath ([string]$project.Path)
+    if (-not $path) { continue }
+    if ($path -eq $root -or $path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $matched += $project
+    }
+  }
+
+  if (@($matched).Count -eq 0) { return $null }
+
+  $input = 0; $output = 0; $cacheRead = 0; $cacheWrite = 0; $reasoning = 0; $entries = 0
+  $model = ""
+  $costCount = 0; $estCount = 0; $realCount = 0
+  $costSum = 0.0
+  foreach ($project in $matched) {
+    $input += [long]$project.Input
+    $output += [long]$project.Output
+    $cacheRead += [long]$project.CacheRead
+    $cacheWrite += [long]$project.CacheWrite
+    $reasoning += [long]$project.Reasoning
+    $entries += [int]$project.Entries
+    if (-not $model -and $project.Model) { $model = [string]$project.Model }
+    if ($null -ne $project.Cost) {
+      $costCount++
+      $costSum += [double]$project.Cost
+      if ($project.Estimated) { $estCount++ } else { $realCount++ }
+    }
+  }
+
+  $cost = $null
+  $estimated = $false
+  if ($costCount -gt 0) {
+    $cost = [Math]::Round($costSum, 4)
+    # (est) only when every priced bucket was an estimate; a mix keeps the
+    # conservative marker; a fully real set (opencode) stays unmarked. A real
+    # zero must not look like an estimate that failed to attach.
+    if ($realCount -eq 0 -or $estCount -gt 0) { $estimated = $true }
+  }
+
+  return [pscustomobject]@{
+    Path = $root; Name = [System.IO.Path]::GetFileName($root)
+    Input = $input; Output = $output; CacheRead = $cacheRead; CacheWrite = $cacheWrite
+    Reasoning = $reasoning; Entries = $entries; Model = $model
+    Cost = $cost; Estimated = $estimated
+  }
+}
+
+# Toggles one agent history panel. "AgentPanelActive" is per agent panel (the
+# same shape as "UsagePanelActive"): a second click closes what the first opened,
+# while another panel (usage or omniroute) is replaced, exactly like usage does.
+function Toggle-HotbarAgentPanel {
+  [CmdletBinding()]
+  param([Parameter(Mandatory = $true)][string]$Agent)
+
+  if ($script:AgentPanelActive) {
+    Set-HotbarPanelLines -Lines @() -Open $false
+    return
+  }
+
+  Set-HotbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines @(
+    (New-HotbarLine ("  " + $Agent) $script:ColorGold 10 $true),
+    (New-HotbarLine "  reading..." $script:ColorDim 9)
+  )
+
+  try {
+    $lines = Get-HotbarAgentLines -Agent $Agent
+    Set-HotbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines $lines
+  } catch {
+    Set-HotbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines @(
+      (New-HotbarLine ("  " + $Agent) $script:ColorGold 10 $true),
+      (New-HotbarErrorLine $_.Exception.Message "  lectura fallida")
+    )
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Item actions
 # ---------------------------------------------------------------------------
@@ -1218,6 +1514,7 @@ function Invoke-HotbarItemAction {
     switch -Regex ($action) {
       "^none$" { return }
       "^omniroute-status$" { Toggle-HotbarPanel; return }
+      "^agent-usage:(claude|codex|opencode)$" { Toggle-HotbarAgentPanel -Agent $Matches[1]; return }
       "^agent-usage$" { Toggle-HotbarUsagePanel; return }
       "^edit-config$" { Open-HotbarConfig; return }
       "^run:(.+)$" { Start-HotbarCommand -Command $Matches[1] -Item $Item; return }
@@ -1385,7 +1682,9 @@ function Invoke-HotbarSelfTest {
     foreach ($item in @($config.items)) {
       $action = [string]$item.action
       if (-not $action) { $action = "none" }
-      $known = ($script:KnownActions -contains $action) -or $action.StartsWith("run:")
+      $known = ($script:KnownActions -contains $action) -or
+        $action.StartsWith("run:") -or
+        ($action -match "^agent-usage:(claude|codex|opencode)$")
       if (-not $known) { $failures += ("item " + [string]$item.id + " has an unsupported action: " + $action) }
       $null = ConvertFrom-HotbarGlyph $item.glyph
     }
@@ -1486,6 +1785,30 @@ function Invoke-HotbarSelfTest {
     if ($approxSeen -and -not $markerSeen) { $failures += "a bounded read was rendered without the ~ marker" }
     $report += ("usage " + ($usageReport -join " "))
     $report += ("usage_lines=" + $usageLines.Count + " usage_ms=" + $usageWatch.ElapsedMilliseconds + " usage_budget=" + $usageBudget + "B marker=" + $markerSeen)
+
+    # The agent history panel, exercised for real with the same bounded read
+    # rationale as the live usage panel above (256 KB keeps this check inside its
+    # ceiling). claude exercises the estimated-money path, which is the one most
+    # likely to regress; opencode exercises the real-money path; both must render
+    # within the panel width, and estimated money without its legend is a lie.
+    $agentBudget = 256KB
+    $agentWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $agentLines = Get-HotbarAgentLines -Agent "claude" -MaxBytes $agentBudget
+    $agentWatch.Stop()
+    foreach ($line in $agentLines) {
+      if ($line.Text.Length -gt $script:MaxPanelChars) {
+        $failures += ("agent panel line overflows the width: " + $line.Text.Length + " chars: " + $line.Text)
+      }
+    }
+    if ($agentLines.Count -lt 4) { $failures += "agent panel produced too few lines" }
+    $estSeen = $false
+    $legendSeen = $false
+    foreach ($line in $agentLines) {
+      if ($line.Text -match '\(est\)') { $estSeen = $true }
+      if ($line.Text -match 'costo estimado') { $legendSeen = $true }
+    }
+    if ($estSeen -and -not $legendSeen) { $failures += "estimated money was rendered without its legend" }
+    $report += ("agent_panel_lines=" + $agentLines.Count + " agent_ms=" + $agentWatch.ElapsedMilliseconds + " agent_est=" + $estSeen)
 
     # Timer ownership, checked without waiting for a tick. The interval is 5 s and
     # the whole self test is under 2 s, so what is under test is the wiring: a live

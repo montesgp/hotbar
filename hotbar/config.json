@@ -7,22 +7,22 @@
       "id": "claude",
       "label": "claude",
       "glyph": "0x2733",
-      "action": "none",
-      "tooltip": "Claude - define action en config.json (none | omniroute-status | agent-usage | run:\u003ccmd\u003e | edit-config)"
+      "action": "agent-usage:claude",
+      "tooltip": "Claude - historico del mes y por proyecto (none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | run:cmd | edit-config)"
     },
     {
       "id": "codex",
       "label": "codex",
       "glyph": "0x25CE",
-      "action": "none",
-      "tooltip": "Codex - define action en config.json (none | omniroute-status | agent-usage | run:\u003ccmd\u003e | edit-config)"
+      "action": "agent-usage:codex",
+      "tooltip": "Codex - historico del mes y por proyecto (none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | run:cmd | edit-config)"
     },
     {
       "id": "opencode",
       "label": "opencode",
       "glyph": "0x25C8",
-      "action": "none",
-      "tooltip": "Opencode - define action en config.json (none | omniroute-status | agent-usage | run:\u003ccmd\u003e | edit-config)"
+      "action": "agent-usage:opencode",
+      "tooltip": "Opencode - historico del mes y por proyecto (none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | run:cmd | edit-config)"
     },
     {
       "id": "usage",
