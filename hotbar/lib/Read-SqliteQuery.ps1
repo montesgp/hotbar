@@ -327,6 +327,11 @@ function Invoke-SqliteWithExecutable {
 
   # The windowless helper is dot-sourced by the widget at script scope; loading it
   # again would re-parse the file for nothing. Only load it when used on its own.
+  # The elseif covers the standalone case where a previous load happened inside a
+  # scope that has since died: the flag says loaded, but the function it loaded
+  # only lives as long as that scope, so a second call in the same process would
+  # throw "Invoke-NativeText is not recognized". Test the callable function, not
+  # just the flag, before trusting it.
   if (-not $script:InvokeNativeLoaded) {
     $lib = [System.IO.Path]::Combine($PSScriptRoot, "Invoke-Native.ps1")
     if (-not [System.IO.File]::Exists($lib)) {
@@ -334,6 +339,10 @@ function Invoke-SqliteWithExecutable {
       return $result
     }
     . $lib
+    $script:InvokeNativeLoaded = $true
+  } elseif (-not (Get-Command Invoke-NativeText -CommandType Function -ErrorAction SilentlyContinue)) {
+    $lib = [System.IO.Path]::Combine($PSScriptRoot, "Invoke-Native.ps1")
+    if ([System.IO.File]::Exists($lib)) { . $lib }
   }
 
   $run = Invoke-NativeText -FilePath $Executable -Arguments @(
