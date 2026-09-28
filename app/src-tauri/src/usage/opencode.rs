@@ -12,7 +12,9 @@
 //! dependency) so the widget can never write to a database a live opencode
 //! process might also have open.
 
-use crate::usage::{normalize_project_path, project_display_name, AgentUsageReport, ProjectUsage, UsageTotals};
+use crate::usage::{
+    normalize_project_path, project_display_name, AgentUsageReport, CostBasis, ProjectUsage, UsageTotals,
+};
 use chrono::{DateTime, Local};
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
@@ -77,6 +79,7 @@ fn read_totals(conn: &Connection, start_ms: i64, end_ms: i64) -> rusqlite::Resul
             // sum is 0.0, a real zero for a local model. Zero sessions means
             // no cost value can even be claimed.
             cost: if entries > 0 { Some(cost) } else { None },
+            cost_basis: if entries > 0 { Some(CostBasis::Reported) } else { None },
             entries: entries as u64,
         })
     })
@@ -109,6 +112,7 @@ fn read_projects(conn: &Connection, start_ms: i64, end_ms: i64) -> rusqlite::Res
                 cache_read_tokens: row.get::<_, i64>(4)? as u64,
                 cache_write_tokens: row.get::<_, i64>(5)? as u64,
                 cost: if entries > 0 { Some(cost) } else { None },
+                cost_basis: if entries > 0 { Some(CostBasis::Reported) } else { None },
                 entries: entries as u64,
             },
         ))
@@ -203,6 +207,11 @@ mod tests {
         assert_eq!(report.totals.output_tokens, 500);
         assert_eq!(report.projects.len(), 1);
         assert_eq!(report.projects[0].totals.cost, Some(1.2345));
+        assert_eq!(
+            report.totals.cost_basis,
+            Some(CostBasis::Reported),
+            "opencode's own cost column is a reported bill, never an estimate"
+        );
     }
 
     #[test]

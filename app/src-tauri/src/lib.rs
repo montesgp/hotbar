@@ -36,11 +36,19 @@ fn save_config(app: tauri::AppHandle, cfg: config::AppConfig) -> Result<(), Stri
 /// service or program involved. Runs off the main thread: the readers stream
 /// multi-megabyte jsonl files and query a SQLite database, which would
 /// otherwise stall the window.
+///
+/// `pricing.json` next to `config.json` is (re)loaded on every call, not
+/// cached, so editing it takes effect on the next refresh without an app
+/// restart - the file is small and this runs off the main thread anyway.
 #[tauri::command]
-async fn get_usage(window: usage::TimeWindow) -> Result<usage::UsageSnapshot, String> {
+async fn get_usage(app: tauri::AppHandle, window: usage::TimeWindow) -> Result<usage::UsageSnapshot, String> {
+    let pricing_path = config::config_dir(&app)?.join("pricing.json");
     tauri::async_runtime::spawn_blocking(move || {
         let paths = usage::resolve_paths(None).ok_or_else(|| "cannot resolve home directory".to_string())?;
-        Ok(usage::collect_usage(window, &paths, chrono::Local::now()))
+        let (overrides, pricing_warning) = usage::pricing::load_overrides(&pricing_path);
+        let mut snapshot = usage::collect_usage(window, &paths, chrono::Local::now(), &overrides);
+        snapshot.pricing_warning = pricing_warning;
+        Ok(snapshot)
     })
     .await
     .map_err(|e| format!("usage task panicked: {e}"))?

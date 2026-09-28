@@ -84,9 +84,23 @@ pub enum AgentStatus {
     Error(String),
 }
 
+/// Whether `UsageTotals.cost` is money the provider actually reported
+/// (opencode's own `session.cost` column) or an estimate computed from
+/// official list prices times the real token counts (claude, codex). Codex
+/// usage read through a ChatGPT subscription is not billed per token at all;
+/// `ApiEquivalent` says "this is what the same tokens would cost on the pay-
+/// per-token API", never implies a bill the user actually received.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CostBasis {
+    ApiEquivalent,
+    Reported,
+}
+
 /// Aggregated counters for one agent (or one project inside an agent), over
 /// the window. `cost` is `None` when the store carries no cost field and no
 /// price row exists for the model(s) involved - never a guessed number.
+/// `cost_basis` is `None` exactly when `cost` is `None`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageTotals {
@@ -96,6 +110,7 @@ pub struct UsageTotals {
     pub cache_write_tokens: u64,
     pub reasoning_tokens: u64,
     pub cost: Option<f64>,
+    pub cost_basis: Option<CostBasis>,
     pub entries: u64,
 }
 
@@ -247,17 +262,29 @@ pub struct UsageSnapshot {
     pub window_end: String,
     pub generated_at: String,
     pub agents: Vec<AgentUsageReport>,
+    /// Set when `pricing.json` exists but failed to parse: built-in prices
+    /// were used anyway (never a crash), and the panel should say so instead
+    /// of silently ignoring the user's overrides. `None` when there is no
+    /// override file, or it parsed fine.
+    pub pricing_warning: Option<String>,
 }
 
-/// Reads all three agents for `window`, as of `now`. Sequential like the
-/// legacy widget: three bounded, independent reads are cheaper than the
-/// coordination a parallel version would need, and a broken one never blocks
-/// the others because each is wrapped in its own `AgentUsageReport`.
-pub fn collect_usage(window: TimeWindow, paths: &UsagePaths, now: DateTime<Local>) -> UsageSnapshot {
+/// Reads all three agents for `window`, as of `now`, pricing claude/codex
+/// against `overrides` layered on top of the built-in table (see
+/// `pricing::find_price_entry`). Sequential like the legacy widget: three
+/// bounded, independent reads are cheaper than the coordination a parallel
+/// version would need, and a broken one never blocks the others because each
+/// is wrapped in its own `AgentUsageReport`.
+pub fn collect_usage(
+    window: TimeWindow,
+    paths: &UsagePaths,
+    now: DateTime<Local>,
+    overrides: &pricing::PriceOverrides,
+) -> UsageSnapshot {
     let (start, end) = window_range(window, now);
 
-    let claude = claude::read_usage(&paths.claude_dir, start, end);
-    let codex = codex::read_usage(&paths.codex_dir, start, end);
+    let claude = claude::read_usage(&paths.claude_dir, start, end, overrides);
+    let codex = codex::read_usage(&paths.codex_dir, start, end, overrides);
     let opencode = opencode::read_usage(&paths.opencode_db, start, end);
 
     UsageSnapshot {
@@ -266,6 +293,7 @@ pub fn collect_usage(window: TimeWindow, paths: &UsagePaths, now: DateTime<Local
         window_end: end.to_rfc3339(),
         generated_at: now.to_rfc3339(),
         agents: vec![claude, codex, opencode],
+        pricing_warning: None,
     }
 }
 
@@ -379,7 +407,8 @@ mod tests {
     #[ignore]
     fn parity_this_month_against_the_real_home() {
         let paths = resolve_paths(None).expect("real home directory must resolve on this machine");
-        let snapshot = collect_usage(TimeWindow::ThisMonth, &paths, Local::now());
+        let overrides = pricing::PriceOverrides::default();
+        let snapshot = collect_usage(TimeWindow::ThisMonth, &paths, Local::now(), &overrides);
 
         println!("\n=== orbitbar Rust reader parity (ThisMonth) ===");
         for agent in &snapshot.agents {

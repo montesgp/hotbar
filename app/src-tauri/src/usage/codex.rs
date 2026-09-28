@@ -16,7 +16,7 @@
 
 use crate::usage::{
     find_jsonl_files, normalize_project_path, pricing, project_display_name, AgentUsageReport,
-    ProjectUsage, UsageTotals,
+    CostBasis, ProjectUsage, UsageTotals,
 };
 use chrono::{DateTime, Local};
 use serde_json::Value;
@@ -36,8 +36,14 @@ impl Bucket {
     }
 }
 
-/// Reads month/window usage from every codex session file under `root`.
-pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>) -> AgentUsageReport {
+/// Reads month/window usage from every codex session file under `root`,
+/// pricing against `overrides` layered on top of the built-in table.
+pub fn read_usage(
+    root: &Path,
+    start: DateTime<Local>,
+    end: DateTime<Local>,
+    overrides: &pricing::PriceOverrides,
+) -> AgentUsageReport {
     if !root.exists() {
         return AgentUsageReport::not_installed(AGENT, format!("missing directory: {}", root.display()));
     }
@@ -135,14 +141,21 @@ pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>) -> 
     let mut month_totals = month.totals;
     if month_totals.entries > 0 {
         let uncached = month_totals.input_tokens.saturating_sub(month_totals.cache_read_tokens);
+        // Codex's store carries one flat cache-write counter with no TTL
+        // split, unlike claude's `cache_creation`; it is priced as a 5-minute
+        // write, and OpenAI's rows price both TTL buckets identically anyway
+        // (see pricing.rs), so this never under- or over-charges it.
         let est = pricing::estimate_cost(
             &month.model,
             uncached,
             month_totals.output_tokens,
             month_totals.cache_read_tokens,
             month_totals.cache_write_tokens,
+            0,
+            overrides,
         );
         month_totals.cost = est.amount;
+        month_totals.cost_basis = est.amount.map(|_| CostBasis::ApiEquivalent);
     }
 
     let mut projects_out = Vec::with_capacity(projects.len());
@@ -155,8 +168,11 @@ pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>) -> 
             totals.output_tokens,
             totals.cache_read_tokens,
             totals.cache_write_tokens,
+            0,
+            overrides,
         );
         totals.cost = est.amount;
+        totals.cost_basis = est.amount.map(|_| CostBasis::ApiEquivalent);
         projects_out.push(ProjectUsage {
             name: project_display_name(&key),
             path: key,
@@ -224,7 +240,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let missing = dir.path().join("nope");
         let (start, end) = window();
-        let report = read_usage(&missing, start, end);
+        let report = read_usage(&missing, start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.status, AgentStatus::NotInstalled);
     }
 
@@ -240,7 +256,7 @@ mod tests {
         fs::write(dir.path().join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.status, AgentStatus::Ok);
         assert_eq!(report.totals.entries, 1, "one session file must contribute exactly one record");
         assert_eq!(report.totals.input_tokens, 1_356_488, "the LAST record's cumulative total must win, not a sum");
@@ -262,7 +278,7 @@ mod tests {
         .unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.totals.entries, 1);
         assert_eq!(report.totals.output_tokens, 50);
     }
@@ -277,7 +293,7 @@ mod tests {
         fs::write(dir.path().join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.status, AgentStatus::Ok);
         assert_eq!(report.totals.entries, 1);
     }
@@ -289,7 +305,7 @@ mod tests {
         fs::write(dir.path().join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.totals.cost, None);
     }
 
@@ -297,8 +313,58 @@ mod tests {
     fn empty_directory_with_no_session_files_is_ok_with_empty_totals() {
         let dir = tempdir().unwrap();
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.status, AgentStatus::Ok);
         assert_eq!(report.totals.entries, 0);
+    }
+
+    #[test]
+    fn a_priced_model_carries_the_api_equivalent_cost_basis() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("session.jsonl"),
+            record("2026-09-15T10:00:00Z", "C:/repos/orbitbar", 100, 50),
+        )
+        .unwrap();
+
+        let (start, end) = window();
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        assert!(report.totals.cost.is_some());
+        assert_eq!(
+            report.totals.cost_basis,
+            Some(CostBasis::ApiEquivalent),
+            "codex money is an API-equivalent estimate, never a reported bill"
+        );
+    }
+
+    #[test]
+    fn an_override_wins_over_the_built_in_gpt_5_6_luna_row() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("session.jsonl"),
+            record("2026-09-15T10:00:00Z", "C:/repos/orbitbar", 1_000_000, 1_000_000),
+        )
+        .unwrap();
+
+        let mut models = std::collections::HashMap::new();
+        models.insert(
+            "gpt-5.6-luna".to_string(),
+            pricing::PriceOverrideEntry {
+                input: 1.0,
+                output: 1.0,
+                cache_read: None,
+                cache_write_5m: None,
+                cache_write_1h: None,
+            },
+        );
+        let overrides = pricing::PriceOverrides { models };
+
+        let (start, end) = window();
+        let report = read_usage(dir.path(), start, end, &overrides);
+        // record() also carries a fixed 1000 cached + 100 cache-write tokens
+        // priced at the override's default multipliers (0.1x / 1.25x input),
+        // so the total is not an even 2.0 but is far from the built-in
+        // gpt-5.6-luna rate's result (0.20 in / 1.20 out) either way.
+        assert_eq!(report.totals.cost, Some(1.9992));
     }
 }

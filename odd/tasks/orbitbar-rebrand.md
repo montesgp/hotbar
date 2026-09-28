@@ -96,8 +96,19 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       (parent re-ran), clippy clean, `tsc --noEmit` clean (parent re-ran), `npm run build` OK,
       `tauri dev` launched without errors. **Gaps:** no frontend test runner (view-model
       untested); UI not visually inspected by the agent → user smoke pending.
-- [ ] **O5c — Pricing that is real and customizable**: verified per-model prices plus a
+- [x] **O5c — Pricing that is real and customizable**: verified per-model prices plus a
       user override file, so cost is never invented and anyone can add their models.
+      Built-in rows carry `source`/`as_of` (Anthropic pricing page; OpenAI
+      developers.openai.com/api/docs/pricing, 2026-09-28). Claude cache writes priced 5m
+      (1.25×) vs 1h (2×). `pricing.json` next to config.json overrides/extends (longest
+      prefix), malformed → `pricingWarning` + built-ins; example in `app/pricing.example.json`.
+      `costBasis` apiEquivalent (claude/codex, shown "≈ $X API") vs reported (opencode).
+      All 12 model ids in the author's data now priced. Route: delegated writer. Evidence:
+      `cargo test` 69/69 (parent re-ran), clippy clean, `tsc` + `npm run build` OK; real data
+      thisMonth: claude ≈ $1,157.97 API-equivalent, codex ≈ $88.84, opencode $0.00 reported.
+      TDD note: RED was observed only as a wrong fixture expectation, not a clean
+      missing-behavior failure — recorded honestly.
+      Also: `c6a3a63` fix(autostart) — dev builds never register; re-enable heals stale paths.
 - [ ] **O5 — Usage readers in Rust** (umbrella) (claude jsonl, codex jsonl, opencode sqlite, pricing
       table), per agent and per project, configurable time window; wired to the
       `agent-usage` panel. Parity with the legacy widget numbers on the author's machine.

@@ -221,7 +221,11 @@ pub fn save(app: &AppHandle, cfg: &AppConfig) -> Result<(), String> {
     persist(&path, cfg)
 }
 
-fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// Resolves the per-user app config dir, creating it if missing. `pub` so
+/// callers outside this module (the `get_usage` command, to find
+/// `pricing.json` next to `config.json`) can reuse the exact same directory
+/// resolution instead of re-deriving it.
+pub fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let resolver = app.path();
     let dir = resolver
         .app_config_dir()
