@@ -15,8 +15,10 @@
       {
         "label": "main",
         "title": "hotbar",
-        "width": 320,
-        "height": 720,
+        "width": 72,
+        "height": 400,
+        "minWidth": 0,
+        "minHeight": 0,
         "resizable": false,
         "decorations": false,
         "transparent": true,

@@ -49,7 +49,7 @@ pub struct Item {
 
 /// Palette of visual tokens for one theme. Themes are data, never code.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ThemePalette {
     pub name: String,
     pub background: String,
@@ -60,6 +60,36 @@ pub struct ThemePalette {
     pub hover_fg: String,
     pub radius_bar: f64,
     pub radius_cell: f64,
+    pub radius_handle: f64,
+    pub tab_radius: f64,
+    pub bar_border: String,
+    pub gradient_top: String,
+    pub gradient_bottom: String,
+    pub half_moon: bool,
+    pub moon_radius: f64,
+}
+
+impl Default for ThemePalette {
+    fn default() -> Self {
+        Self {
+            name: "classic".into(),
+            background: "#101014".into(),
+            panel: "#3A3A44".into(),
+            text: "#C8C8D4".into(),
+            text_dim: "#8A8A96".into(),
+            hover_bg: "#3A3322".into(),
+            hover_fg: "#E8C46A".into(),
+            radius_bar: 22.0,
+            radius_cell: 22.0,
+            radius_handle: 8.0,
+            tab_radius: 23.0,
+            bar_border: "#3A3A44".into(),
+            gradient_top: "#232329".into(),
+            gradient_bottom: "#101014".into(),
+            half_moon: true,
+            moon_radius: 200.0,
+        }
+    }
 }
 
 const PALETTE_CLASSIC: &str = r##"{
@@ -71,7 +101,14 @@ const PALETTE_CLASSIC: &str = r##"{
   "hoverBg": "#3A3322",
   "hoverFg": "#E8C46A",
   "radiusBar": 22.0,
-  "radiusCell": 8.0
+  "radiusCell": 22.0,
+  "radiusHandle": 8.0,
+  "tabRadius": 23.0,
+  "barBorder": "#3A3A44",
+  "gradientTop": "#232329",
+  "gradientBottom": "#101014",
+  "halfMoon": true,
+  "moonRadius": 200.0
 }"##;
 
 const PALETTE_DARK: &str = r##"{
@@ -83,7 +120,14 @@ const PALETTE_DARK: &str = r##"{
   "hoverBg": "#2A2A35",
   "hoverFg": "#FFFFFF",
   "radiusBar": 12.0,
-  "radiusCell": 6.0
+  "radiusCell": 12.0,
+  "radiusHandle": 8.0,
+  "tabRadius": 12.0,
+  "barBorder": "#1F1F26",
+  "gradientTop": "#0D0D11",
+  "gradientBottom": "#0D0D11",
+  "halfMoon": false,
+  "moonRadius": 12.0
 }"##;
 
 /// Resolve a theme name ("classic" | "dark" | any future name) to its palette.
@@ -97,7 +141,13 @@ pub fn palette_for(theme: &str) -> ThemePalette {
 }
 
 /// Load the config from the per-user dir, creating the file with defaults if
-/// missing. A corrupt file fails loudly (a typo in config must be visible).
+/// missing.
+///
+/// A hand-edited config that fails to parse must NOT brick the widget. The
+/// product invites users to edit this file (it is the extension point), and a
+/// single trailing comma should not cost them their bar. So a broken file is
+/// quarantined next to itself and the app starts on defaults; the recovery is
+/// reported on stderr instead of swallowed.
 pub fn load(app: &AppHandle) -> Result<AppConfig, String> {
     let dir = config_dir(app)?;
     let path = dir.join("config.json");
@@ -108,8 +158,30 @@ pub fn load(app: &AppHandle) -> Result<AppConfig, String> {
         return Ok(cfg);
     }
 
-    let raw = fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    serde_json::from_str(&raw).map_err(|e| format!("invalid config.json: {e}"))
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+
+    match serde_json::from_str::<AppConfig>(strip_bom(&raw)) {
+        Ok(cfg) => Ok(cfg),
+        Err(err) => {
+            let backup = path.with_extension("json.invalid");
+            let _ = fs::rename(&path, &backup);
+            let cfg = AppConfig::default();
+            persist(&path, &cfg)?;
+            eprintln!(
+                "hotbar: config.json was invalid ({err}); moved to {} and started on defaults",
+                backup.display()
+            );
+            Ok(cfg)
+        }
+    }
+}
+
+/// Windows editors (Notepad, PowerShell 5.1) write a UTF-8 BOM, which
+/// serde_json rejects at byte 0 with "expected value at line 1 column 1".
+/// Strip it so a BOM-edited config loads like any other.
+fn strip_bom(raw: &str) -> &str {
+    raw.strip_prefix('\u{feff}').unwrap_or(raw)
 }
 
 /// Persist a config back to the per-user dir (used by save-config and by the
@@ -180,4 +252,90 @@ fn default_items() -> Vec<Item> {
             tooltip: "Abrir hotbar/config.json".into(),
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every embedded palette must parse. This is the one thing a typo in a
+    /// const string would break at runtime on the user's first launch, and it
+    /// is invisible until the window paints nothing.
+    #[test]
+    fn every_embedded_palette_parses() {
+        for theme in ["classic", "dark"] {
+            let p = palette_for(theme);
+            assert_eq!(p.name, theme);
+            assert!(!p.background.is_empty());
+            assert!(p.radius_cell > 0.0);
+        }
+    }
+
+    /// A typo in the config theme must never break the bar.
+    #[test]
+    fn unknown_theme_falls_back_to_classic() {
+        assert_eq!(palette_for("clasci").name, "classic");
+        assert_eq!(palette_for("").name, "classic");
+    }
+
+    /// The crescent only works because the moon radius matches the bar height;
+    /// a regression here silently turns the bar into a rounded rectangle.
+    #[test]
+    fn classic_moon_geometry_matches_the_bar() {
+        let p = palette_for("classic");
+        assert!(p.half_moon);
+        assert_eq!(p.moon_radius, 200.0, "moon radius is half the 400px bar height");
+        assert_eq!(p.tab_radius, 23.0, "collapsed tab is 46x46, so half is 23");
+    }
+
+    /// Cells are 44px circles in the WPF original, not 8px rounded squares.
+    #[test]
+    fn cell_radius_is_a_circle_not_a_rounded_square() {
+        assert_eq!(palette_for("classic").radius_cell, 22.0);
+    }
+
+    /// A BOM-edited config is a normal thing on Windows: Notepad and
+    /// PowerShell 5.1 both add one, and serde_json rejects it at byte 0.
+    #[test]
+    fn strip_bom_lets_a_bom_edited_config_parse() {
+        let clean = r#"{"monitor":"primary","margin":8,"collapsed":false,"theme":"classic","fontSize":10.0,"items":[]}"#;
+        let bommed = format!("\u{feff}{clean}");
+        assert!(serde_json::from_str::<AppConfig>(clean).is_ok());
+        assert!(
+            serde_json::from_str::<AppConfig>(&bommed).is_err(),
+            "precondition: serde_json must reject the BOM"
+        );
+        assert!(serde_json::from_str::<AppConfig>(strip_bom(&bommed)).is_ok());
+    }
+
+    /// A config missing optional keys must still load, so an older file written
+    /// by a previous version is not treated as corrupt.
+    #[test]
+    fn partial_config_gets_defaults() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(cfg.theme, "dark");
+        assert_eq!(cfg.monitor, "primary");
+        assert!(!cfg.items.is_empty(), "items must fall back to the defaults");
+    }
+
+    /// The default set must stay usable: the bar renders nothing if there is
+    /// not at least one item.
+    #[test]
+    fn default_items_are_never_empty_and_carry_glyphs() {
+        let items = default_items();
+        assert!(!items.is_empty());
+        for item in &items {
+            assert!(!item.id.is_empty());
+            // Glyphs are stored as "0x2733"; the frontend parses them with
+            // parseInt(.., 16), which tolerates the 0x prefix, so the check
+            // here strips it too rather than using from_str_radix directly.
+            let hex = item.glyph.trim_start_matches("0x");
+            assert!(
+                u32::from_str_radix(hex, 16).is_ok(),
+                "glyph {} must be a hex code point",
+                item.glyph
+            );
+            assert!(!item.tooltip.is_empty(), "{} needs a tooltip", item.id);
+        }
+    }
 }

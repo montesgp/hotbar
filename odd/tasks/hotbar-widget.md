@@ -1,10 +1,116 @@
-# Feature: hotbar-widget — barra flotante de Windows siempre-encima (giro completo, 2026-09-26)
+# Feature: hotbar-widget — barra flotante siempre-encima, multi-OS (giro completo, 2026-09-26)
 
-Status: **FASE 2 ABIERTA — port a Tauri 2 (cross-platform)**. Decisión de stack del usuario
-(2026-09-27): **Tauri 2 (Rust + webview)**; la estética WPF actual prevalece como theme
-`classic` por defecto. V1 cerrado salvo HB17 (rename manual). Toolchain instalada +
-HB18-HB20 HECHOS (commit `bd8f769` en main, 6850 líneas). Siguiente: HB21 (theme classic
-en CSS, colapso, drag multi-monitor). Pendiente: estrategia de entrega (ask-on-risk).
+Status: **FASE 3 ABIERTA — la hotbar que gusta, multi-OS (2026-09-27)**. Decisión del
+usuario: el Tauri 2 es EL producto (no un port parcial); hay que conseguir que la estética
+WPF v1 funcione igual en los tres SOs, con launcher portable, autostart por config, y docs
+de colaboración. HB18-HB20 committeados; HB21 quedó sin commitear (362 líneas) y está
+**incompleto y mal orientado**: el frontend actual es una lista horizontal 320×720 con
+labels, no la media luna vertical 72×400 con glifos. Autostart verificado como ausente
+(total: sin proceso, sin Startup, sin registro Run, sin `tauri-plugin-autostart`).
+
+## Fase 3 — La hotbar que gusta, en los 3 SOs (decisión del usuario 2026-09-27)
+
+Alcance textual: *"avancemos con la hot multiplataforma que sirva para todos los OS... que
+sea portable pero que los usuarios la puedan disparar desde la carpeta rápidamente y con un
+acceso directo en root del proyecto... dejemos asentado en repo la forma de colaboración y
+como deben levantar issues... por defecto permitamos que se pueda agregar por config que se
+inicie cuando inicia el S.O. [...] Si el diseño cambia por cuestiones del SO aceptamos eso
+pero debe ser semejante en todas las toolbar"*.
+
+Regla de paridad declarada: **misma silueta y misma interacción en los 3 SOs.** Donde el SO
+imponga una diferencia (WebView2 vs webkit2gtk vs WKWebView, Wayland vs always-on-top,
+`.desktop` de autostart vs registro vs LaunchAgent) se acepta la diferencia de MECÁNICA y se
+documenta; nunca la diferencia de FORMA. La verificación de paridad es un checklist de smoke
+por SO, no un juicio de ojo en una sola máquina.
+
+Distribución (decidida): **portable primero**. Un launcher en la raíz del repo que encuentra
+el binario ya compilado y lo ejecuta, y si no existe cae a modo dev. El acceso directo de raíz
+es un script por SO (`hotbar.sh` / `hotbar.cmd`), no un `.lnk` (binario y Windows-only).
+
+### Especificación visual congelada (medida del WPF v1, `hotbar/hotbar.ps1`)
+
+Estos valores son la fuente de verdad del port; están medidos, no estimados:
+
+| Elemento | Valor |
+|---|---|
+| Ventana expandida | **72 × 400** px (NO 320×720) |
+| Ventana colapsada | **46 × 46** px (NO 80×80) |
+| Ventana con panel abierto | 392 × 400 (panel 320 a la izquierda) |
+| Forma | `border-radius: 200px 0 0 200px` sobre 72×400 = **media luna** (equivalente CSS exacto del `CornerRadius="200,0,0,200"` de WPF) |
+| Gradiente | **vertical** `#232329` (top) → `#101014` (bottom) — el actual está en `90deg` (horizontal): bug |
+| Borde | `#3A3A44`, 1px |
+| Sombra | `DropShadow` blur 6, depth 2, dir 270, opacity .65, negro |
+| Celda | **44 × 44**, margen `0 2 0 2` (**pitch 48**), `border-radius: 22` (círculo) |
+| Celda texto | `#C8C8D4`; hover `#3A3322` / `#E8C46A`; pressed `#4A3F22` |
+| Handle colapsar | 56 × 36, margen inferior 8, radio 8, fg `#8A8A96`, chevron `›` (U+203A) font 24 |
+| Tab expandido | 46 × 46, radio `23,0,0,23`, chevron `‹` (U+2039) font 16 |
+| Glifo ítem | font-size 20, **sin label** (el WPF no muestra texto bajo el glifo) |
+| Panel | 320 ancho, padding `12,10`, borde `0,1,0,1` |
+| Fuente | Segoe UI, Arial |
+| Tope del bulbo | columna de 44px alineada a la derecha; la curva deja 54px en `dy 68..332` → 10px de holgura. En CSS lo resuelve `overflow:hidden` + `border-radius` (a diferencia de WPF, que NO recorta hijos: ese fue el defecto HB12) |
+
+### Checklist Fase 3 (IDs estables)
+- [x] **HB28** — Port real de la silueta: ventana 72×400 / 46×46, gradiente vertical, media
+      luna, celdas circulares 44×44 pitch 48 SIN labels, handle 56×36 arriba, tab colapsado
+      46×46, sombra, panel inline 320 a la izquierda. Un solo `index.html` + CSS + TS.
+
+      Evidencia (medida, no declarada). Tres defectos silenciosos, ninguno con error:
+      1. La ventana era 136×400, no 72×400. Windows devolvía un ancho mayor que el
+         min-content del webview mientras `position_right_center` apuntaba a un borde de
+         72px inexistente → 56px de ventana fuera de un monitor de 1080. Fix: `minWidth:0` /
+         `minHeight:0` + `set_size` incondicional (antes solo cuando `collapsed`).
+      2. La luna NO se dibujaba nunca: `applyTheme` hacía el toggle de clase sobre
+         `document.documentElement` (`<html>`) con selector `body.moon .bar`. La regla
+         compilaba y jamás coincidía → caía al radio de 22px (rectángulo redondeado).
+      3. `border-radius: 200px 0 0 200px` NO equivale a `CornerRadius="200,0,0,200"`. CSS
+         reescala los radios que desbordan una arista: f = 72/200 = 0.36, y la media elipse
+         se convertía en un círculo de 72px. Fix: elipse explícita `72px 200px` (no desborda,
+         f = 1.0), derivada en `main.ts` de `SIZE_EXPANDED`.
+      Medición final (sonda magenta: el diff de capturas NO ve una forma transparente,
+      porque donde la barra no pinta se ve el escritorio igual en ambas): perfil simétrico,
+      0px en ambas puntas, 72px en el centro, Δ≤2px entre +dy y −dy. Desviación ≤5px en el
+      60% central y ~13px en las puntas: es la aproximación de radios grandes de Chromium,
+      no un fallo de layout. Paridad exacta al píxel con WPF no es alcanzable (Windows y
+      Chromium redondean distinto).
+      Estados verificados con `GetWindowRect`, ambos al mismo borde 1072 (margen 8 en
+      1080×1920): expandida 72×400 en (1000,760); colapsada 46×46 en (1026,937).
+      Guardas: 4 tests nuevos en `lib.rs` (11/11 verde). `moon_radii_survive_css_unscaled`
+      se verificó FALLANDO al reintroducir el bug, y `the_wpf_style_200px_shorthand_would_be_
+      rescaled` prueba que el guard tiene dientes. Sin runner de frontend (`build` = `tsc &&
+      vite build`), el defecto `<html>` vs `<body>` no tiene test automático: pendiente de
+      decisión si se añade vitest.
+- [ ] **HB29** — Autostart por config: campo `autoStart` (default **true**) en config v2,
+      `tauri-plugin-autostart` (registro Windows / LaunchAgent macOS / `.desktop` Linux),
+      comandos `get_autostart` / `set_autostart`, ítem de toggle en la barra. Honesto: en
+      Linux el autostart solo funciona para apps instaladas, no para el binario suelto.
+- [ ] **HB30** — Launcher portable en raíz: `hotbar.sh` + `hotbar.cmd` que preferifican el
+      binario ya compilado y caen a dev mode; documentado en README como "un comando".
+- [ ] **HB31** — Docs de colaboración: `CONTRIBUTING.md` (cómo levantar issue, qué
+      información exige un buen reporte, cómo proponer cambio, checklist de paridad) +
+      README con quick start real por SO + templates de issue.
+- [ ] **HB32** — CI de los 3 SOs (GitHub Actions): build Windows + macOS + Linux sobre
+      Ubuntu 22.04, `cargo test`, artefactos. Es el detector de rotura cross-platform: no
+      es una garantía, es lo que la convierte en verificable.
+- [ ] **HB33** — Rebrand a `hotbar-widget`: identifier/productName de Tauri + purga de
+      `herdr` en superficie. OJO: cambiar el identifier cambia el dir de config
+      (`%APPDATA%\com.hotbar.app` → nuevo) → migrar el config existente o documentarlo.
+- [ ] **HB17** (sigue abierto) — Rename de carpeta local `herdr-omniroute` → `hotbar-widget`.
+      **BLOQUEADO en-sesión**: el host tiene el dir como cwd (Windows `RenameItemIOError`).
+      Manual al cerrar la sesión.
+
+### Reglas de ejecución Fase 3
+- **Route**: subagent wall determinista verificado 2026-09-27 ("OpenCode's free tier can only
+  be used from within OpenCode") → **implementación INLINE**. El trigger de delegación se
+  registra como NO enrutable, no como omitido.
+- **TDD**: no configurado en este repo. Checks = `cargo build` + `cargo test` + verificación
+  estructural de que el HTML/CSS/TS compila (`npm run build`) + paridad de silueta medida.
+- **Delivery**: política establecida del repo = commits por unidad en `main`, push con docs
+  consistentes, sin PRs. `ask-on-risk` ya resuelta como "directo a main con exception".
+- **NO tocar**: `hotbar/` (WPF v1) — queda como referencia congelada de la especificación
+  visual y como rollback; configs de clientes; `~/.omniroute/.env`;
+  `odd/tasks/omniroute-autofallback.md`; los cambios runtime de `hotbar/config.json`.
+- **Paridad multi-OS**: cualquier diferencias de apariencia entre SOs debe documentarse en el
+  checklist de smoke, no esconderse.
 
 ## Fase 2 — Port a Tauri 2 (Windows + Ubuntu + macOS)
 

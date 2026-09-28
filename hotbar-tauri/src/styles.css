@@ -2,6 +2,11 @@
  * Hotbar — theme tokens arrive as CSS custom properties set by main.ts from
  * the Rust ThemePalette (themes are data, never code). The :root block below
  * is only a fallback so the page is not blank before get_config resolves.
+ *
+ * Geometry here is ported 1:1 from the measured WPF v1 window (hotbar/hotbar.ps1).
+ * Those numbers are a specification, not a style opinion: the bar is 72x400 and
+ * the crescent is a 200px radius on the left edge, which is exactly what the
+ * WPF `CornerRadius="200,0,0,200"` produced on a 72x400 border.
  */
 :root {
   --hb-bg: #101014;
@@ -10,11 +15,28 @@
   --hb-text-dim: #8a8a96;
   --hb-hover-bg: #3a3322;
   --hb-hover-fg: #e8c46a;
+  --hb-press-bg: #4a3f22;
   --hb-radius-bar: 22px;
-  --hb-radius-cell: 8px;
+  --hb-radius-cell: 22px;
+  --hb-radius-handle: 8px;
+  --hb-tab-radius: 23px;
+  --hb-moon-rx: 72px;
+  --hb-moon-ry: 200px;
+  --hb-bar-border: #3a3a44;
+  --hb-grad-top: #232329;
+  --hb-grad-bottom: #101014;
   --hb-font-size: 10px;
+  --hb-glyph-size: 20px;
+  --hb-cell: 44px;
+  --hb-cell-gap: 4px;
 
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  /* The WPF window asked for Segoe UI and fell back to Arial. On Linux and
+   * macOS that stack either misses or substitutes a metric-incompatible face,
+   * so the glyph pitch drifts. These platform names keep the pitch close
+   * without shipping a webfont (a remote font would break the offline
+   * requirement, and Tauri loads this from disk). */
+  font-family: "Segoe UI", Ubuntu, Cantarell, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
   font-size: var(--hb-font-size);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -35,37 +57,122 @@ body {
   background: transparent !important;
   overflow: hidden;
   user-select: none;
+  cursor: default;
 }
 
+/*
+ * The crescent. It wraps the panel AND the bar column on purpose, because that
+ * is the WPF structure: one rounded shape whose left edge is the bulge and
+ * whose right edge stays flat against the monitor border. When the panel opens
+ * the window grows leftwards and the bulge simply gets wider.
+ */
 .bar {
+  position: relative;
   width: 100%;
   height: 100%;
   display: flex;
-  align-items: stretch;
-  background: var(--hb-bg);
+  align-items: center;
+  background: linear-gradient(
+    180deg,
+    var(--hb-grad-top),
+    var(--hb-grad-bottom)
+  );
+  border: 1px solid var(--hb-bar-border);
   border-radius: var(--hb-radius-bar);
-  padding: 8px;
+  /* CSS clips children to border-radius; WPF does not. That difference is why
+   * the port drops the PathGeometry clip the WPF build needed. */
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+}
+
+/*
+ * The half-moon. The radii MUST be written as an explicit ellipse, and that
+ * detail is not cosmetic:
+ *
+ * Writing `border-radius: 200px 0 0 200px` looks like the WPF
+ * `CornerRadius="200,0,0,200"`, but CSS rescales every radius when they
+ * overflow an edge. On a 72x400 box the top edge would need 200 of horizontal
+ * radius, so f = 72/200 = 0.36 and the result is a 72px CIRCLE, not a crescent.
+ *
+ * `72px 200px` overflows nothing (72+0 <= 72, 200+200 <= 400) so f stays 1.0
+ * and the left edge is the true half-ellipse the WPF build drew. main.ts sets
+ * these from the window size so the shape can never drift from the geometry.
+ */
+body.moon .bar {
+  border-top-left-radius: var(--hb-moon-rx) var(--hb-moon-ry);
+  border-bottom-left-radius: var(--hb-moon-rx) var(--hb-moon-ry);
+}
+
+/* Inline panel, opens to the LEFT of the bar. */
+.panel {
+  width: 320px;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 12px;
+  border-right: 1px solid var(--hb-bar-border);
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--hb-text);
+  font-size: var(--hb-font-size);
+  line-height: 1.35;
+}
+
+/*
+ * The bar column: handle on top, then the cells. The 3px right margin is the
+ * WPF `Margin="0,0,3,0"`, which keeps the glyph column off the flat edge.
+ */
+.bar-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-right: 3px;
 }
 
 .cells {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
+  align-items: center;
+  gap: var(--hb-cell-gap);
 }
 
+/*
+ * Cells are glyph-only circles. The label stays in the DOM for the tooltip and
+ * for screen readers, but it is not painted: the WPF bar showed no text under
+ * the glyph and painting it here would break the silhouette.
+ */
 .cell {
+  width: var(--hb-cell);
+  height: var(--hb-cell);
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  justify-content: center;
   border-radius: var(--hb-radius-cell);
-  background: var(--hb-panel);
+  background: transparent;
   color: var(--hb-text);
-  font-size: var(--hb-font-size);
+  font-size: var(--hb-glyph-size);
+  line-height: 1;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  /* WebKit renders symbol glyphs heavier than GDI; nudge to match. */
+  text-shadow: 0 0 0 currentColor;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .cell:hover {
@@ -73,15 +180,88 @@ body {
   color: var(--hb-hover-fg);
 }
 
-.cell .glyph {
-  width: 1.4em;
-  text-align: center;
-  font-size: 1.6em;
+.cell:active {
+  background: var(--hb-press-bg);
 }
 
+.cell .glyph {
+  display: block;
+  line-height: 1;
+}
+
+/* Visible to assistive tech and to the title tooltip, never painted. */
 .cell .label {
-  flex: 1;
+  position: absolute;
+  width: 1px;
+  height: 1px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* Collapse handle: sits above the cells, points right because collapsing
+ * shrinks the bar toward the screen edge. */
+.collapse {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--hb-radius-handle);
+  background: transparent;
+  color: var(--hb-text-dim);
+  font-size: 24px;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.collapse:hover {
+  background: var(--hb-hover-bg);
+  color: var(--hb-hover-fg);
+}
+
+/*
+ * Collapsed: the whole window is the 46x46 tab, radius 23 on the left. The
+ * chevron flips because expanding grows the bar LEFT into the desktop.
+ */
+body.collapsed .bar {
+  border-radius: var(--hb-tab-radius) 0 0 var(--hb-tab-radius);
+}
+
+body.collapsed .bar-col,
+body.collapsed .panel {
+  display: none;
+}
+
+body.collapsed .tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--hb-tab-radius) 0 0 var(--hb-tab-radius);
+  background: transparent;
+  border: none;
+  color: var(--hb-text);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+body.collapsed .tab:hover {
+  background: var(--hb-hover-bg);
+  color: var(--hb-hover-fg);
+}
+
+.tab {
+  display: none;
 }
