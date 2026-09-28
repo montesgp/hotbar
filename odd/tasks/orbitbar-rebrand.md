@@ -124,8 +124,13 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 - [ ] **O5 — Usage readers in Rust** (umbrella) (claude jsonl, codex jsonl, opencode sqlite, pricing
       table), per agent and per project, configurable time window; wired to the
       `agent-usage` panel. Parity with the legacy widget numbers on the author's machine.
-- [ ] **O6 — Docs and architecture rewrite** for the product: core + readers + extensions,
-      quick start per OS, how to add a custom metric.
+- [x] **O6 — Docs and architecture rewrite** for the product: core + readers + extensions,
+      quick start per OS, how to add a custom metric. README, docs/architecture.md (Mermaid,
+      reader/metric extension points), app/README.md, new CONTRIBUTING.md; docs/hotbar.md
+      deleted. Route: delegated writer in a worktree (parallel with O5d). GitHub repo renamed
+      `montesgp/hotbar` → `montesgp/orbitbar` with a new description and topics. Remaining
+      hotbar/PowerShell mentions are code comments about the config migration and the
+      legacy parity source (go away with O8).
 - [ ] **O8 — Remove everything old** (user, 2026-09-28: "todo lo que sea viejo lo borramos...
       debe quedar lo más clean posible el repo").
       - [x] Stale `HKCU\...\Run\Hotbar` autostart entry removed (pointed to a deleted exe).

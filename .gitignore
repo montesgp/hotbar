@@ -4,3 +4,4 @@
 legacy/windows-widget/config.json
 *.local.json
 .atl/
+.claude/worktrees/
