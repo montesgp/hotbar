@@ -128,6 +128,82 @@ body.moon .bar {
 }
 
 /*
+ * Token-usage panel (agent-usage / agent-usage:<agent>). Layout only — the
+ * numbers and status text come from app/src/usage-view.ts, which mirrors the
+ * legacy Get-OrbitbarAgentLines panel (status, totals, cost, top projects).
+ */
+.usage-window-row {
+  margin-bottom: 6px;
+}
+
+.usage-window-select {
+  width: 100%;
+  padding: 2px 4px;
+  background: var(--ob-panel);
+  color: var(--ob-text);
+  border: 1px solid var(--ob-bar-border);
+  border-radius: var(--ob-radius-handle);
+  font: inherit;
+  cursor: pointer;
+}
+
+.usage-section {
+  padding: 6px 0;
+  border-top: 1px solid var(--ob-bar-border);
+}
+
+.usage-section:first-of-type {
+  border-top: none;
+}
+
+.usage-agent-name {
+  font-weight: 600;
+  color: var(--ob-hover-fg);
+  margin-bottom: 2px;
+}
+
+.usage-line {
+  color: var(--ob-text);
+}
+
+.usage-line--dim {
+  color: var(--ob-text-dim);
+}
+
+.usage-error {
+  color: var(--ob-hover-fg);
+}
+
+.usage-cost {
+  font-weight: 600;
+}
+
+.usage-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.usage-project-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ob-text-dim);
+}
+
+.usage-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-project-stats {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/*
  * The bar column: handle on top, then the cells. The 3px right margin is the
  * WPF `Margin="0,0,3,0"`, which keeps the glyph column off the flat edge.
  */

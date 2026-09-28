@@ -89,8 +89,13 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       codex 6 vs 78). Rust reads the full window. Also fixed: legacy per-project buckets
       ignored the window. **Gap:** price table only knows `claude-opus-5-5` and `gpt-5.6-luna`,
       so claude/codex cost shows "no data" for the models actually used → O5c.
-- [ ] **O5b — Usage panel in the app** (render `get_usage`, window selector, per agent and
-      per project).
+- [x] **O5b — Usage panel in the app** (render `get_usage`, window selector, per agent and
+      per project). `usageWindow` config field (default thisMonth), pure view-model in
+      `app/src/usage-view.ts`, loading/error states, stale-response guard, no polling.
+      Route: delegated writer. Evidence: RED (unknown field) → GREEN; `cargo test` 51/51
+      (parent re-ran), clippy clean, `tsc --noEmit` clean (parent re-ran), `npm run build` OK,
+      `tauri dev` launched without errors. **Gaps:** no frontend test runner (view-model
+      untested); UI not visually inspected by the agent → user smoke pending.
 - [ ] **O5c — Pricing that is real and customizable**: verified per-model prices plus a
       user override file, so cost is never invented and anyone can add their models.
 - [ ] **O5 — Usage readers in Rust** (umbrella) (claude jsonl, codex jsonl, opencode sqlite, pricing

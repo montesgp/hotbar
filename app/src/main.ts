@@ -14,6 +14,15 @@ import {
   monitorFromPoint,
   type Monitor,
 } from "@tauri-apps/api/window";
+import {
+  agentFromAction,
+  buildPanelViewModel,
+  isUsageAction,
+  WINDOW_OPTIONS,
+  type AgentSectionViewModel,
+  type TimeWindow,
+  type UsageSnapshot,
+} from "./usage-view";
 
 export interface ThemePalette {
   name: string;
@@ -50,6 +59,8 @@ export interface OrbitbarConfig {
   fontSize: number;
   /** Desired autostart state. Rust reconciles the OS entry against it on start. */
   autoStart: boolean;
+  /** Persisted usage-panel window selector (Today | 7 days | 30 days | This month). */
+  usageWindow: TimeWindow;
   items: Item[];
 }
 
@@ -181,6 +192,199 @@ function setCollapsedUi(collapsed: boolean): void {
 function setPanelUi(open: boolean): void {
   const panel = document.querySelector<HTMLElement>("#panel");
   if (panel) panel.hidden = !open;
+}
+
+/**
+ * Token-usage panel: renders `get_usage(window)` for either every agent
+ * (`agent-usage`) or one agent (`agent-usage:<agent>`). Ported from the
+ * legacy widget's `Get-OrbitbarAgentLines` / `Get-OrbitbarUsageLines`
+ * (`legacy/windows-widget/orbitbar.ps1`): status, totals, cost, then up to 5
+ * top projects. Unlike the legacy panel this has no refresh timer — the task
+ * calls for a fetch on open and on window change only, never background
+ * polling.
+ */
+
+/** Which agent filter (or "all") is currently shown, so a window-selector
+ * change re-fetches the same view instead of resetting to "all agents". */
+let usagePanelFilter: string | null = null;
+/** Guards against a stale response winning a race when the panel is
+ * reopened, or the window changed, before the previous fetch resolved. */
+let usageFetchToken = 0;
+
+function usageStatusBadge(status: AgentSectionViewModel["status"]): string {
+  if (status.state === "ok") return "";
+  return status.state === "notInstalled" ? " (not installed)" : " (error)";
+}
+
+/** One agent's block: name/status, totals, cost, then its top projects. */
+function renderUsageSection(section: AgentSectionViewModel): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "usage-section";
+
+  const heading = document.createElement("div");
+  heading.className = "usage-agent-name";
+  heading.textContent = `${section.displayName}${usageStatusBadge(section.status)}`;
+  el.appendChild(heading);
+
+  if (!section.totals) {
+    const line = document.createElement("div");
+    line.className = "usage-line usage-line--dim";
+    line.textContent = section.statusText;
+    el.appendChild(line);
+    return el;
+  }
+
+  const totals = section.totals;
+  const tokenLine = document.createElement("div");
+  tokenLine.className = "usage-line";
+  tokenLine.textContent = `in ${totals.input}  out ${totals.output}  cache ${totals.cacheRead}/${totals.cacheWrite}`;
+  el.appendChild(tokenLine);
+
+  if (totals.reasoning) {
+    const reasoningLine = document.createElement("div");
+    reasoningLine.className = "usage-line usage-line--dim";
+    reasoningLine.textContent = `reasoning ${totals.reasoning}  ·  ${totals.entries} entries`;
+    el.appendChild(reasoningLine);
+  } else {
+    const entriesLine = document.createElement("div");
+    entriesLine.className = "usage-line usage-line--dim";
+    entriesLine.textContent = `${totals.entries} entries`;
+    el.appendChild(entriesLine);
+  }
+
+  const costLine = document.createElement("div");
+  costLine.className = "usage-line usage-cost";
+  costLine.textContent = totals.cost;
+  el.appendChild(costLine);
+
+  if (section.topProjects.length > 0) {
+    const projects = document.createElement("div");
+    projects.className = "usage-projects";
+    for (const project of section.topProjects) {
+      const row = document.createElement("div");
+      row.className = "usage-project-row";
+
+      const name = document.createElement("span");
+      name.className = "usage-project-name";
+      name.textContent = project.name;
+      row.appendChild(name);
+
+      const stats = document.createElement("span");
+      stats.className = "usage-project-stats";
+      stats.textContent = `${project.output}  ${project.cost}`;
+      row.appendChild(stats);
+
+      projects.appendChild(row);
+    }
+    el.appendChild(projects);
+  }
+
+  return el;
+}
+
+/** The window selector row (Today / 7 days / 30 days / This month). */
+function renderWindowSelector(
+  cfg: OrbitbarConfig,
+  onChange: (next: TimeWindow) => void,
+): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "usage-window-row";
+
+  const select = document.createElement("select");
+  select.className = "usage-window-select";
+  select.setAttribute("aria-label", "Usage time window");
+  for (const option of WINDOW_OPTIONS) {
+    const opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label;
+    if (option.value === cfg.usageWindow) opt.selected = true;
+    select.appendChild(opt);
+  }
+  select.addEventListener("change", () => {
+    onChange(select.value as TimeWindow);
+  });
+  row.appendChild(select);
+
+  return row;
+}
+
+function renderUsageLoading(body: HTMLElement, cfg: OrbitbarConfig, onWindowChange: (next: TimeWindow) => void): void {
+  body.replaceChildren();
+  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  const loading = document.createElement("div");
+  loading.className = "usage-line usage-line--dim";
+  loading.textContent = "Loading usage…";
+  body.appendChild(loading);
+}
+
+function renderUsageError(body: HTMLElement, cfg: OrbitbarConfig, onWindowChange: (next: TimeWindow) => void, message: string): void {
+  body.replaceChildren();
+  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  const error = document.createElement("div");
+  error.className = "usage-line usage-error";
+  error.textContent = `Could not read usage: ${message}`;
+  body.appendChild(error);
+}
+
+function renderUsageResult(
+  body: HTMLElement,
+  cfg: OrbitbarConfig,
+  onWindowChange: (next: TimeWindow) => void,
+  snapshot: UsageSnapshot,
+  filterAgent: string | null,
+): void {
+  body.replaceChildren();
+  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  const vm = buildPanelViewModel(snapshot, filterAgent);
+  if (vm.sections.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "usage-line usage-line--dim";
+    empty.textContent = "No usage data for this selection.";
+    body.appendChild(empty);
+    return;
+  }
+  for (const section of vm.sections) {
+    body.appendChild(renderUsageSection(section));
+  }
+}
+
+/**
+ * Opens (or re-fetches) the usage panel for `action` ("agent-usage" or
+ * "agent-usage:<agent>"). `togglePanel` resizes/repositions the window;
+ * `persistConfig` is passed in so a window-selector change survives restart.
+ */
+async function openUsagePanel(
+  cfg: OrbitbarConfig,
+  action: string,
+  body: HTMLElement,
+  togglePanel: (open: boolean) => Promise<void>,
+): Promise<void> {
+  const filterAgent = agentFromAction(action);
+  usagePanelFilter = filterAgent;
+
+  const fetchUsage = async (): Promise<void> => {
+    const token = ++usageFetchToken;
+    renderUsageLoading(body, cfg, onWindowChange);
+    try {
+      const snapshot = await invoke<UsageSnapshot>("get_usage", { window: cfg.usageWindow });
+      if (token !== usageFetchToken) return; // superseded by a newer fetch
+      renderUsageResult(body, cfg, onWindowChange, snapshot, usagePanelFilter);
+    } catch (err) {
+      if (token !== usageFetchToken) return;
+      console.error("orbitbar: get_usage failed", err);
+      renderUsageError(body, cfg, onWindowChange, String(err));
+    }
+  };
+
+  function onWindowChange(next: TimeWindow): void {
+    if (cfg.usageWindow === next) return;
+    cfg.usageWindow = next;
+    void persistConfig(cfg);
+    void fetchUsage();
+  }
+
+  await togglePanel(true);
+  await fetchUsage();
 }
 
 /** Persist the current config object back to disk. */
@@ -321,8 +525,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    // Panel wiring for item actions lands with the readers (HB22/HB23); until
-    // then a cell click only demonstrates the 392px panel geometry.
     if (cells) {
       cells.addEventListener("click", async (ev) => {
         const target = (ev.target as HTMLElement).closest<HTMLElement>(".cell");
@@ -348,13 +550,22 @@ window.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
+        const action = target.dataset.action ?? "";
         const body = document.querySelector<HTMLElement>("#panel-body");
-        if (body) {
-          body.replaceChildren();
-          const line = document.createElement("div");
-          line.textContent = `${target.dataset.id}: ${target.dataset.action}`;
-          body.appendChild(line);
+        if (!body) return;
+
+        if (isUsageAction(action)) {
+          await openUsagePanel(cfg, action, body, togglePanel);
+          return;
         }
+
+        // Other item actions (omniroute-status, run:cmd, edit-config, ...)
+        // are wired up separately; a cell click just demonstrates panel
+        // geometry until they land.
+        body.replaceChildren();
+        const line = document.createElement("div");
+        line.textContent = `${target.dataset.id}: ${action}`;
+        body.appendChild(line);
         await togglePanel(true);
       });
     }

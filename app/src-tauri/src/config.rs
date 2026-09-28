@@ -13,6 +13,7 @@
 //! copies that old file into the new location on first launch so a rename of
 //! the app never drops an existing user's settings.
 
+use crate::usage::TimeWindow;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,13 @@ pub struct AppConfig {
     /// serde default, a config written before this field existed simply gets
     /// true rather than failing to parse.
     pub auto_start: bool,
+    /// The time window the usage panel (`agent-usage` / `agent-usage:<agent>`)
+    /// reads by default and persists after the user changes the selector.
+    /// Defaults to `ThisMonth`, matching the legacy widget's month-to-date
+    /// panel; a config written before this field existed simply gets that
+    /// default rather than failing to parse, the same migration-safe pattern
+    /// `auto_start` uses above.
+    pub usage_window: TimeWindow,
     pub items: Vec<Item>,
 }
 
@@ -44,6 +52,7 @@ impl Default for AppConfig {
             theme: "classic".into(),
             font_size: 10.0,
             auto_start: true,
+            usage_window: TimeWindow::default(),
             items: default_items(),
         }
     }
@@ -386,6 +395,23 @@ mod tests {
     fn an_explicit_auto_start_false_is_preserved() {
         let cfg: AppConfig = serde_json::from_str(r#"{"autoStart":false}"#).unwrap();
         assert!(!cfg.auto_start);
+    }
+
+    /// A config written before `usageWindow` existed must migrate to
+    /// `ThisMonth` rather than fail to parse, so the usage panel opens with a
+    /// sane default on an upgrade instead of bricking the config load.
+    #[test]
+    fn a_config_without_usage_window_defaults_to_this_month() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"theme":"classic"}"#).unwrap();
+        assert_eq!(cfg.usage_window, TimeWindow::ThisMonth);
+    }
+
+    /// An explicit selector must be preserved across save/load, otherwise the
+    /// window choice the user made in the panel would never stick.
+    #[test]
+    fn an_explicit_usage_window_is_preserved() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"usageWindow":"last7Days"}"#).unwrap();
+        assert_eq!(cfg.usage_window, TimeWindow::Last7Days);
     }
 
     /// The identifier rename (`com.hotbar.app` -> `com.orbitbar.app`) moves the
