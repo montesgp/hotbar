@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+legacy/windows-widget/config.json
+*.local.json
+.atl/

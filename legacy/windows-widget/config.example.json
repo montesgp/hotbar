@@ -1,0 +1,42 @@
+{
+  "monitor": "primary",
+  "margin": 8,
+  "collapsed": false,
+  "items": [
+    {
+      "id": "claude",
+      "label": "claude",
+      "glyph": "0x2733",
+      "action": "agent-usage:claude",
+      "tooltip": "Claude - month history and per-project (none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | run:cmd | edit-config)"
+    },
+    {
+      "id": "codex",
+      "label": "codex",
+      "glyph": "0x25CE",
+      "action": "agent-usage:codex",
+      "tooltip": "Codex - month history and per-project (none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | run:cmd | edit-config)"
+    },
+    {
+      "id": "opencode",
+      "label": "opencode",
+      "glyph": "0x25C8",
+      "action": "agent-usage:opencode",
+      "tooltip": "Opencode - month history and per-project (none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | run:cmd | edit-config)"
+    },
+    {
+      "id": "usage",
+      "label": "uso",
+      "glyph": "0x0024",
+      "action": "agent-usage",
+      "tooltip": "Live session usage (claude/codex/opencode) - real-time balance"
+    },
+    {
+      "id": "settings",
+      "label": "ajustes",
+      "glyph": "0x2699",
+      "action": "edit-config",
+      "tooltip": "Open orbitbar config"
+    }
+  ]
+}
