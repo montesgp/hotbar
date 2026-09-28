@@ -131,8 +131,45 @@ export function statusLabel(status: AgentStatus): string {
 
 export interface ProjectLineViewModel {
   name: string;
+  /** Full normalized path (see `normalize_project_path` in usage/mod.rs),
+   * always available as the row's tooltip so a disambiguated or truncated
+   * name never loses the real location. */
+  path: string;
   output: string;
   cost: string;
+}
+
+/**
+ * The parent folder's own name, one level up from `path`'s last segment.
+ * `path` is `normalize_project_path`'s output: backslash-separated on every
+ * platform (it replaces `/` with `\` before storing), but this also accepts
+ * forward slashes defensively rather than assume the backend never changes.
+ * Returns `null` when there is no parent segment to show (root or bare name).
+ */
+function parentSegment(path: string): string | null {
+  const segments = path.split(/[\\/]+/).filter((s) => s.length > 0);
+  if (segments.length < 2) return null;
+  return segments[segments.length - 2];
+}
+
+/**
+ * Two sibling checkouts can share a leaf folder name (e.g. two
+ * "src-tauri" projects) and land side by side in the same agent's top-5
+ * list with nothing to tell them apart. When a name collides within the
+ * list actually being shown, this prefixes the parent folder so the rows
+ * stay distinct (e.g. "app/src-tauri" vs "legacy/src-tauri"); a name that
+ * is unique in the list is left alone. Collisions are only checked within
+ * `projects` (the already-truncated top-5), not the full project set, since
+ * that is what the user sees together.
+ */
+export function disambiguateProjectNames(projects: ProjectUsage[]): string[] {
+  const counts = new Map<string, number>();
+  for (const p of projects) counts.set(p.name, (counts.get(p.name) ?? 0) + 1);
+  return projects.map((p) => {
+    if ((counts.get(p.name) ?? 0) <= 1) return p.name;
+    const parent = parentSegment(p.path);
+    return parent ? `${parent}/${p.name}` : p.name;
+  });
 }
 
 export interface AgentSectionViewModel {
@@ -183,11 +220,16 @@ export function buildAgentSection(report: AgentUsageReport): AgentSectionViewMod
         }
       : null,
     topProjects: isOk
-      ? report.projects.slice(0, MAX_PROJECTS_SHOWN).map((p) => ({
-          name: p.name,
-          output: formatCompactNumber(p.totals.outputTokens),
-          cost: formatCost(p.totals.cost, p.totals.costBasis),
-        }))
+      ? (() => {
+          const top = report.projects.slice(0, MAX_PROJECTS_SHOWN);
+          const names = disambiguateProjectNames(top);
+          return top.map((p, i) => ({
+            name: names[i],
+            path: p.path,
+            output: formatCompactNumber(p.totals.outputTokens),
+            cost: formatCost(p.totals.cost, p.totals.costBasis),
+          }));
+        })()
       : [],
   };
 }

@@ -109,6 +109,18 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       TDD note: RED was observed only as a wrong fixture expectation, not a clean
       missing-behavior failure — recorded honestly.
       Also: `c6a3a63` fix(autostart) — dev builds never register; re-enable heals stale paths.
+- [x] **O5d — Panel bug from the user's smoke test** (2026-09-28): `$` did not widen the
+      window and the user got stuck. Root cause: `resizable: false` makes Windows lock
+      min/max size at creation, so `setSize(392x400)` was silently clamped to 72x400.
+      Fix: toggle resizable around `setSize` (+ `core:window:allow-set-resizable`); panel
+      moved out of the crescent container into its own card (it was clipped by the curve);
+      close via same cell, Escape or ×; colliding project names get a parent segment, full
+      path in the tooltip. Evidence: GetWindowRect 72x400 ↔ 392x400 right-edge snapped;
+      screenshots of closed / open / switch / close states inspected (parent re-checked two);
+      `cargo test` 69/69, clippy, `tsc`, `npm run build` clean. Lesson: O5b was marked done
+      without opening the panel — UI tasks now require screenshot verification.
+- [ ] **O9 — Wire the remaining item actions**: `edit-config` (open config.json and
+      pricing.json in the OS default editor) and `run:<cmd>`; today they show a placeholder.
 - [ ] **O5 — Usage readers in Rust** (umbrella) (claude jsonl, codex jsonl, opencode sqlite, pricing
       table), per agent and per project, configurable time window; wired to the
       `agent-usage` panel. Parity with the legacy widget numbers on the author's machine.
