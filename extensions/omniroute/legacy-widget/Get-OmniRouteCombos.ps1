@@ -3,14 +3,14 @@
   Reads the routing combos straight out of OmniRoute's SQLite store.
 
 .DESCRIPTION
-  Copy of extensions/herdr/scripts/lib/Get-OmniRouteCombos.ps1 for the hotbar
+  Copy of extensions/herdr/scripts/lib/Get-OmniRouteCombos.ps1 for the orbitbar
   widget. The field mapping is untouched - the bar and the status popup must
   never disagree about what a combo is - and two things changed for the widget:
 
-    * this copy lives under extensions/omniroute/hotbar (an optional
+    * this copy lives under extensions/omniroute/legacy-widget (an optional
       extension, O3), because the bar is standalone and must not reach into
       the Herdr plugin's script tree; only Read-SqliteQuery.ps1 and
-      Invoke-Native.ps1 stay shared in hotbar/lib, since the core usage reader
+      Invoke-Native.ps1 stay shared in legacy/windows-widget/lib, since the core usage reader
       needs them too;
     * Start-OmniRouteComboRead takes a BusyTimeoutMs, so the panel read can be
       bounded tighter than the popup's. The read runs on the UI thread, and a
@@ -151,10 +151,10 @@ function Complete-OmniRouteComboRead {
     ActiveComboName = ""
   }
 
-  # Shared helper, stays in the core tree: extensions/omniroute/hotbar/ ->
-  # extensions/omniroute -> extensions -> repo root -> hotbar/lib.
-  $hotbarLib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, "..", "..", "..", "hotbar", "lib"))
-  $lib = [System.IO.Path]::Combine($hotbarLib, "Read-SqliteQuery.ps1")
+  # Shared helper, stays in the core tree: extensions/omniroute/legacy-widget/ ->
+  # extensions/omniroute -> extensions -> repo root -> legacy/windows-widget/lib.
+  $widgetLib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, "..", "..", "..", "legacy", "windows-widget", "lib"))
+  $lib = [System.IO.Path]::Combine($widgetLib, "Read-SqliteQuery.ps1")
   if (-not [System.IO.File]::Exists($lib)) {
     $result.Error = "SQLite reader not found: $lib"
     return $result

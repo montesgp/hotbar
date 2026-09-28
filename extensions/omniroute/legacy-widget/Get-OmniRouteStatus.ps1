@@ -8,7 +8,7 @@
   API for this, because every /api route is authenticated and the bar must never
   read, print or store a key.
 
-  The check runs through the windowless helper (hotbar\lib\Invoke-Native.ps1 -
+  The check runs through the windowless helper (legacy\windows-widget\lib\Invoke-Native.ps1 -
   shared with the core usage reader, so it stays in the core tree even though
   this reader is an optional extension), so opening the inline panel never
   flashes a console window on top of the desktop.
@@ -36,19 +36,19 @@ $script:GatewayPort = 20128
   in flight at the same time.
 
 .NOTES
-  Call Complete-HotbarGatewayProbe (or Get-HotbarGatewayUp) with the result. The
+  Call Complete-OrbitbarGatewayProbe (or Get-OrbitbarGatewayUp) with the result. The
   two checks are independent, and the panel pays for the slower one instead of
   their sum.
 #>
-function Start-HotbarGatewayProbe {
+function Start-OrbitbarGatewayProbe {
   [CmdletBinding()]
   param()
 
   if (-not $script:InvokeNativeLoaded) {
-    # Shared helper, stays in the core tree: extensions/omniroute/hotbar/ ->
-    # extensions/omniroute -> extensions -> repo root -> hotbar/lib.
-    $hotbarLib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, "..", "..", "..", "hotbar", "lib"))
-    $lib = [System.IO.Path]::Combine($hotbarLib, "Invoke-Native.ps1")
+    # Shared helper, stays in the core tree: extensions/omniroute/legacy-widget/ ->
+    # extensions/omniroute -> extensions -> repo root -> legacy/windows-widget/lib.
+    $widgetLib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, "..", "..", "..", "legacy", "windows-widget", "lib"))
+    $lib = [System.IO.Path]::Combine($widgetLib, "Invoke-Native.ps1")
     if (-not [System.IO.File]::Exists($lib)) {
       return [pscustomobject]@{ Process = $null; StdOutTask = $null; StdErrTask = $null; StartError = "windowless helper not found: $lib" }
     }
@@ -63,7 +63,7 @@ function Start-HotbarGatewayProbe {
   Finishes a probe job and reports UP or DOWN.
 
 .PARAMETER Job
-  Job from Start-HotbarGatewayProbe. A null job means the helper was missing, which
+  Job from Start-OrbitbarGatewayProbe. A null job means the helper was missing, which
   is DOWN-with-a-reason, never UP by default.
 
 .PARAMETER TimeoutMs
@@ -75,7 +75,7 @@ function Start-HotbarGatewayProbe {
   (a short reason, always populated when Up is false). Never throws: a missing
   netstat, a timeout or an unreadable answer all come back as Down with the reason.
 #>
-function Complete-HotbarGatewayProbe {
+function Complete-OrbitbarGatewayProbe {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)]$Job,

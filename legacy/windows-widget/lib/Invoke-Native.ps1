@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-  Windowless external-command helper for the hotbar widget.
+  Windowless external-command helper for the orbitbar widget.
 
 .DESCRIPTION
-  Copy of scripts/lib/Invoke-Native.ps1, carried into hotbar/lib/ so the widget is
+  Copy of scripts/lib/Invoke-Native.ps1, carried into legacy/windows-widget/lib/ so the widget is
   standalone: the bar must not reach into the Herdr plugin's script tree to read
   data. The contract is identical to the original - System.Diagnostics.Process with
   UseShellExecute = $false and CreateNoWindow = $true - so a child never allocates

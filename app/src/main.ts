@@ -42,7 +42,7 @@ export interface Item {
   tooltip: string;
 }
 
-export interface HotbarConfig {
+export interface OrbitbarConfig {
   monitor: string;
   margin: number;
   collapsed: boolean;
@@ -54,7 +54,7 @@ export interface HotbarConfig {
 }
 
 export interface ConfigPayload {
-  config: HotbarConfig;
+  config: OrbitbarConfig;
   palette: ThemePalette;
 }
 
@@ -82,19 +82,19 @@ function sizeFor(collapsed: boolean, panelOpen: boolean): PhysicalSize {
 /** Map a Rust palette to CSS custom properties on :root. */
 export function applyTheme(palette: ThemePalette): void {
   const root = document.documentElement;
-  root.style.setProperty("--hb-bg", palette.background);
-  root.style.setProperty("--hb-panel", palette.panel);
-  root.style.setProperty("--hb-text", palette.text);
-  root.style.setProperty("--hb-text-dim", palette.textDim);
-  root.style.setProperty("--hb-hover-bg", palette.hoverBg);
-  root.style.setProperty("--hb-hover-fg", palette.hoverFg);
-  root.style.setProperty("--hb-press-bg", palette.hoverFg);
-  root.style.setProperty("--hb-radius-cell", `${palette.radiusCell}px`);
-  root.style.setProperty("--hb-radius-handle", `${palette.radiusHandle}px`);
-  root.style.setProperty("--hb-tab-radius", `${palette.tabRadius}px`);
-  root.style.setProperty("--hb-bar-border", palette.barBorder);
-  root.style.setProperty("--hb-grad-top", palette.gradientTop);
-  root.style.setProperty("--hb-grad-bottom", palette.gradientBottom);
+  root.style.setProperty("--ob-bg", palette.background);
+  root.style.setProperty("--ob-panel", palette.panel);
+  root.style.setProperty("--ob-text", palette.text);
+  root.style.setProperty("--ob-text-dim", palette.textDim);
+  root.style.setProperty("--ob-hover-bg", palette.hoverBg);
+  root.style.setProperty("--ob-hover-fg", palette.hoverFg);
+  root.style.setProperty("--ob-press-bg", palette.hoverFg);
+  root.style.setProperty("--ob-radius-cell", `${palette.radiusCell}px`);
+  root.style.setProperty("--ob-radius-handle", `${palette.radiusHandle}px`);
+  root.style.setProperty("--ob-tab-radius", `${palette.tabRadius}px`);
+  root.style.setProperty("--ob-bar-border", palette.barBorder);
+  root.style.setProperty("--ob-grad-top", palette.gradientTop);
+  root.style.setProperty("--ob-grad-bottom", palette.gradientBottom);
 
   // The moon radii come from the window geometry, not from the palette.
   // rx must equal the bar width and ry the half height: anything that overflows
@@ -105,8 +105,8 @@ export function applyTheme(palette: ThemePalette): void {
   // styles.css is `body.moon .bar`. Toggling it on <html> compiles fine and
   // silently never matches, which leaves the bar with the 22px fallback radius
   // and no crescent at all.
-  root.style.setProperty("--hb-moon-rx", `${SIZE_EXPANDED.width}px`);
-  root.style.setProperty("--hb-moon-ry", `${SIZE_EXPANDED.height / 2}px`);
+  root.style.setProperty("--ob-moon-rx", `${SIZE_EXPANDED.width}px`);
+  root.style.setProperty("--ob-moon-ry", `${SIZE_EXPANDED.height / 2}px`);
   document.body.classList.toggle("moon", palette.halfMoon);
 }
 
@@ -158,7 +158,7 @@ async function snapToMonitor(
 
 /** Resize + reposition the window for the requested collapse/panel state. */
 async function applyState(
-  cfg: HotbarConfig,
+  cfg: OrbitbarConfig,
   panelOpen: boolean,
 ): Promise<void> {
   const size = sizeFor(cfg.collapsed, panelOpen);
@@ -184,11 +184,11 @@ function setPanelUi(open: boolean): void {
 }
 
 /** Persist the current config object back to disk. */
-async function persistConfig(cfg: HotbarConfig): Promise<void> {
+async function persistConfig(cfg: OrbitbarConfig): Promise<void> {
   try {
     await invoke("save_config", { cfg });
   } catch (err) {
-    console.error("hotbar: failed to save config", err);
+    console.error("orbitbar: failed to save config", err);
   }
 }
 
@@ -199,7 +199,7 @@ async function persistConfig(cfg: HotbarConfig): Promise<void> {
  * the moment the cursor leaves the webview). We only track the gesture and
  * snap + persist when the user releases.
  */
-function enableDrag(cfg: HotbarConfig): void {
+function enableDrag(cfg: OrbitbarConfig): void {
   const bar = document.querySelector<HTMLElement>("#bar");
   if (!bar) return;
 
@@ -256,7 +256,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const payload = await invoke<ConfigPayload>("get_config");
     applyTheme(payload.palette);
     document.documentElement.style.setProperty(
-      "--hb-font-size",
+      "--ob-font-size",
       `${payload.config.fontSize}px`,
     );
     const cfg = payload.config;
@@ -286,7 +286,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           applyAutostartUi(cell, tooltip, on);
         }
       } catch (err) {
-        console.error("hotbar: could not read autostart state", err);
+        console.error("orbitbar: could not read autostart state", err);
       }
     }
 
@@ -338,7 +338,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             if (next) await enableAutostart();
             else await disableAutostart();
           } catch (err) {
-            console.error("hotbar: autostart could not be changed", err);
+            console.error("orbitbar: autostart could not be changed", err);
             applyAutostartUi(target, tooltip, cfg.autoStart);
             return;
           }
@@ -361,6 +361,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     enableDrag(cfg);
   } catch (err) {
-    console.error("hotbar: failed to load config", err);
+    console.error("orbitbar: failed to load config", err);
   }
 });

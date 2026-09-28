@@ -61,9 +61,21 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       RDD: two candidates declined by the user (base `main` and base `origin/main`).
       **Follow-up:** `.env.example` sets `OMNIROUTE_ENTRY=omniroute/bin/omniroute.mjs` as a
       value; it should be a commented placeholder (tools cannot edit `.env*` files).
-- [ ] **O4 — Rename hotbar → orbitbar.** Folders, Tauri identifier/productName, Cargo and npm
+- [x] **O4 — Rename hotbar → orbitbar.** Folders, Tauri identifier/productName, Cargo and npm
       package names, UI copy, config paths. Identifier change moves the config dir
       (`com.hotbar.app` → `com.orbitbar.app`): migrate the existing config on first launch.
+      Layout: `hotbar-tauri/` → `app/`, `hotbar/` → `legacy/windows-widget/`
+      (`orbitbar.ps1`, `launch-orbitbar.ps1`; local `config.json` moved on disk),
+      `extensions/omniroute/legacy-widget/`. Crate `orbitbar`/`orbitbar_lib`, npm `orbitbar`,
+      mutex `Local\orbitbar.widget.v1`, CSS `--ob-*`, default tooltips in English.
+      `migrate_legacy_config` copies (never moves) the old config. Route: delegated writer.
+      Evidence: RED (`migrate_legacy_config` not found) → GREEN; `cargo test` 16/16 (parent
+      re-ran: 16/16); `cargo build` OK; `tsc --noEmit` clean; PS parse 0 errors (8 files);
+      `orbitbar.ps1 -SelfTest` PASS. Only `com.hotbar.app` remains, in migration code.
+      O2+O3 independent verifier: PASS, no defects. RDD: 4th candidate (base `origin/main`)
+      declined. **Side effects:** the writer stopped two running `hotbar-tauri.exe`
+      processes to unlock the folder; a stale `HKCU\...\Run\Hotbar` entry points to the old
+      `hotbar-tauri\...\release\hotbar-tauri.exe`.
 - [ ] **O5 — Usage readers in Rust** (claude jsonl, codex jsonl, opencode sqlite, pricing
       table), per agent and per project, configurable time window; wired to the
       `agent-usage` panel. Parity with the legacy widget numbers on the author's machine.

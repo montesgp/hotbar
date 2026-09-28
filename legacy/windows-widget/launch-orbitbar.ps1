@@ -1,18 +1,18 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Starts the hotbar widget in its own hidden STA process.
+  Starts the orbitbar widget in its own hidden STA process.
 
 .DESCRIPTION
   WPF needs a single-threaded apartment, and a hidden window should not drag a
   console behind it. Both of those are host-level concerns, so they live here
   and nowhere else: this script is the only entry point a human runs, and
-  hotbar.ps1 only ever has to assume it is already on a pumped STA thread.
+  orbitbar.ps1 only ever has to assume it is already on a pumped STA thread.
 
   A second instance is refused, not stacked. The authoritative guard is the
-  mutex inside hotbar.ps1, which is the only place that lives for the whole
+  mutex inside orbitbar.ps1, which is the only place that lives for the whole
   life of the widget. The probe below is a courtesy: it saves spawning a
-  process that would only print HOTBAR_ALREADY_RUNNING and exit, so the user
+  process that would only print ORBITBAR_ALREADY_RUNNING and exit, so the user
   gets a readable message instead of a silent no-op. If two launchers race
   between the probe and the child taking the mutex, the child still wins the
   argument and the loser exits 3.
@@ -28,11 +28,11 @@
   default returns as soon as the widget process has started.
 
 .EXAMPLE
-  .\launch-hotbar.ps1
+  .\launch-orbitbar.ps1
   Starts the widget, hidden, and returns immediately.
 
 .EXAMPLE
-  .\launch-hotbar.ps1 -SelfTest
+  .\launch-orbitbar.ps1 -SelfTest
   Runs the self test here and now and returns its exit code.
 #>
 [CmdletBinding()]
@@ -44,14 +44,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# The name is duplicated from hotbar.ps1 on purpose. Reading it from a file at
+# The name is duplicated from orbitbar.ps1 on purpose. Reading it from a file at
 # runtime would mean parsing a script to start a script, and a two-line constant
 # duplicated in a launcher is cheaper to keep honest than that is.
-$script:HotbarMutexName = "Local\herdr.hotbar.widget.v1"
+$script:OrbitbarMutexName = "Local\orbitbar.widget.v1"
 
-$bar = Join-Path $PSScriptRoot "hotbar.ps1"
+$bar = Join-Path $PSScriptRoot "orbitbar.ps1"
 if (-not (Test-Path -LiteralPath $bar)) {
-  Write-Output ("hotbar: cannot find " + $bar)
+  Write-Output ("orbitbar: cannot find " + $bar)
   exit 2
 }
 
@@ -76,10 +76,10 @@ if ($SelfTest) {
 # ownership only when we are the creator; if the name already exists, createdNew
 # is false and we never owned it, so there is nothing to release.
 $createdNew = $false
-$probe = New-Object System.Threading.Mutex($true, $script:HotbarMutexName, [ref]$createdNew)
+$probe = New-Object System.Threading.Mutex($true, $script:OrbitbarMutexName, [ref]$createdNew)
 try {
   if (-not $createdNew) {
-    Write-Output "hotbar: already running"
+    Write-Output "orbitbar: already running"
     exit 0
   }
   $probe.ReleaseMutex()
@@ -94,7 +94,7 @@ $barArgs = @(
 
 $process = Start-Process -FilePath $shell -ArgumentList $barArgs -WindowStyle Hidden -PassThru
 if ($null -eq $process) {
-  Write-Output "hotbar: failed to start the widget process"
+  Write-Output "orbitbar: failed to start the widget process"
   exit 1
 }
 
@@ -103,5 +103,5 @@ if ($Wait) {
   exit $process.ExitCode
 }
 
-Write-Output ("hotbar: started (pid " + $process.Id + ")")
+Write-Output ("orbitbar: started (pid " + $process.Id + ")")
 exit 0

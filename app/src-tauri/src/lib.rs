@@ -78,9 +78,9 @@ fn position_right_center(
 ///   - the user turned autostart off in their OS settings          -> enable again
 ///   - the user turned it off here, entry still registered        -> disable
 ///
-/// Failing to register is never fatal. A hotbar that refuses to launch because
-/// a Run key could not be written is strictly worse than one that launches
-/// without autostart, so this logs and lets startup continue.
+/// Failing to register is never fatal. An orbitbar that refuses to launch
+/// because a Run key could not be written is strictly worse than one that
+/// launches without autostart, so this logs and lets startup continue.
 fn sync_autostart(app: &tauri::AppHandle, cfg: &config::AppConfig) {
     let manager = app.autolaunch();
     let outcome = match manager.is_enabled() {
@@ -137,7 +137,7 @@ pub fn run() {
 mod tests {
     use super::{SIZE_COLLAPSED, SIZE_EXPANDED};
 
-    /// The crescent radii src/main.ts writes into `--hb-moon-rx` / `--hb-moon-ry`.
+    /// The crescent radii src/main.ts writes into `--ob-moon-rx` / `--ob-moon-ry`.
     fn moon_radii() -> (u32, u32) {
         (SIZE_EXPANDED.0, SIZE_EXPANDED.1 / 2)
     }

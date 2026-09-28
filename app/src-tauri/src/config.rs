@@ -1,16 +1,21 @@
-//! Hotbar config v2 — schema, loader, and theme palettes as data.
+//! Orbitbar config v2 — schema, loader, and theme palettes as data.
 //!
 //! The config lives in the per-user app config dir (Tauri `app_config_dir`):
-//!   Windows: %APPDATA%\com.hotbar.app\config.json
-//!   Linux:   ~/.config/com.hotbar.app/config.json
-//!   macOS:   ~/Library/Application Support/com.hotbar.app/config.json
+//!   Windows: %APPDATA%\com.orbitbar.app\config.json
+//!   Linux:   ~/.config/com.orbitbar.app/config.json
+//!   macOS:   ~/Library/Application Support/com.orbitbar.app/config.json
 //!
 //! If the file does not exist on first launch it is created with the defaults
 //! below, so end users always get an editable config without installing tools.
+//!
+//! The Tauri identifier used to be `com.hotbar.app`, which put the config in a
+//! sibling directory under the same platform config root. `migrate_legacy_config`
+//! copies that old file into the new location on first launch so a rename of
+//! the app never drops an existing user's settings.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +164,14 @@ pub fn load(app: &AppHandle) -> Result<AppConfig, String> {
     let dir = config_dir(app)?;
     let path = dir.join("config.json");
 
+    if let Some(legacy_dir) = legacy_config_dir(app) {
+        let legacy_path = legacy_dir.join("config.json");
+        // Best-effort: a migration failure (e.g. unreadable old file) must not
+        // block startup. Falling through to the ordinary default-writer below
+        // is strictly better than refusing to launch.
+        let _ = migrate_legacy_config(&legacy_path, &path);
+    }
+
     if !path.exists() {
         let cfg = AppConfig::default();
         persist(&path, &cfg)?;
@@ -176,7 +189,7 @@ pub fn load(app: &AppHandle) -> Result<AppConfig, String> {
             let cfg = AppConfig::default();
             persist(&path, &cfg)?;
             eprintln!(
-                "hotbar: config.json was invalid ({err}); moved to {} and started on defaults",
+                "orbitbar: config.json was invalid ({err}); moved to {} and started on defaults",
                 backup.display()
             );
             Ok(cfg)
@@ -208,6 +221,33 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// The pre-rename per-user config dir, if it can be resolved. The Tauri
+/// identifier used to be `com.hotbar.app`, a sibling of the current
+/// `com.orbitbar.app` under the same platform config root, so this never
+/// calls `app_config_dir()` itself (that resolves the *current* identifier)
+/// and instead derives the sibling path from it.
+fn legacy_config_dir(app: &AppHandle) -> Option<PathBuf> {
+    let dir = app.path().app_config_dir().ok()?;
+    let parent = dir.parent()?;
+    Some(parent.join("com.hotbar.app"))
+}
+
+/// Copies `old_path` into `new_path` when the new config does not exist yet
+/// but the old one does. Returns whether a migration happened. The old file
+/// is left in place (copy, not move) so a rollback to a previous build still
+/// finds its config.
+fn migrate_legacy_config(old_path: &Path, new_path: &Path) -> Result<bool, String> {
+    if new_path.exists() || !old_path.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = new_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    fs::copy(old_path, new_path)
+        .map_err(|e| format!("cannot copy {} to {}: {e}", old_path.display(), new_path.display()))?;
+    Ok(true)
+}
+
 fn persist(path: &PathBuf, cfg: &AppConfig) -> Result<(), String> {
     let json = serde_json::to_string_pretty(cfg).map_err(|e| format!("cannot serialize config: {e}"))?;
     fs::write(path, json).map_err(|e| format!("cannot write {}: {e}", path.display()))
@@ -221,35 +261,35 @@ fn default_items() -> Vec<Item> {
             label: "claude".into(),
             glyph: "0x2733".into(),
             action: "agent-usage:claude".into(),
-            tooltip: format!("Claude - historico del mes y por proyecto ({tooltip})"),
+            tooltip: format!("Claude - month history and per-project ({tooltip})"),
         },
         Item {
             id: "codex".into(),
             label: "codex".into(),
             glyph: "0x25CE".into(),
             action: "agent-usage:codex".into(),
-            tooltip: format!("Codex - historico del mes y por proyecto ({tooltip})"),
+            tooltip: format!("Codex - month history and per-project ({tooltip})"),
         },
         Item {
             id: "opencode".into(),
             label: "opencode".into(),
             glyph: "0x25C8".into(),
             action: "agent-usage:opencode".into(),
-            tooltip: format!("Opencode - historico del mes y por proyecto ({tooltip})"),
+            tooltip: format!("Opencode - month history and per-project ({tooltip})"),
         },
         Item {
             id: "usage".into(),
-            label: "uso".into(),
+            label: "usage".into(),
             glyph: "0x0024".into(),
             action: "agent-usage".into(),
-            tooltip: "Uso de la sesion en vivo (claude/codex/opencode) - saldo en tiempo real".into(),
+            tooltip: "Live session usage (claude/codex/opencode) - real-time balance".into(),
         },
         Item {
             id: "settings".into(),
-            label: "ajustes".into(),
+            label: "settings".into(),
             glyph: "0x2699".into(),
             action: "edit-config".into(),
-            tooltip: "Abrir hotbar/config.json".into(),
+            tooltip: "Open orbitbar config".into(),
         },
         Item {
             id: "autostart".into(),
@@ -258,7 +298,7 @@ fn default_items() -> Vec<Item> {
             // tooltip, not by a second glyph, so the icon stays the user's.
             glyph: "0x23FB".into(),
             action: "toggle-autostart".into(),
-            tooltip: "Arrancar Hotbar al iniciar sesion".into(),
+            tooltip: "Launch Orbitbar at login".into(),
         },
     ]
 }
@@ -346,6 +386,82 @@ mod tests {
     fn an_explicit_auto_start_false_is_preserved() {
         let cfg: AppConfig = serde_json::from_str(r#"{"autoStart":false}"#).unwrap();
         assert!(!cfg.auto_start);
+    }
+
+    /// The identifier rename (`com.hotbar.app` -> `com.orbitbar.app`) moves the
+    /// per-user config dir. A user with an existing config under the old
+    /// identifier must not lose it: the old file gets copied into the new
+    /// location on first launch, before it is loaded.
+    #[test]
+    fn migrate_legacy_config_copies_old_into_new_when_only_old_exists() {
+        let tmp = std::env::temp_dir().join(format!(
+            "orbitbar-migrate-test-{}-a",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let old_path = tmp.join("old").join("config.json");
+        let new_path = tmp.join("new").join("config.json");
+        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        fs::write(&old_path, r#"{"theme":"dark"}"#).unwrap();
+
+        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
+
+        assert!(migrated, "must report that it migrated");
+        assert!(new_path.exists(), "new config must now exist");
+        assert!(old_path.exists(), "old config must be preserved, not moved");
+        assert_eq!(
+            fs::read_to_string(&new_path).unwrap(),
+            fs::read_to_string(&old_path).unwrap()
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// When the new config already exists, the migration must not clobber it
+    /// with the old one, even if the old one is still present.
+    #[test]
+    fn migrate_legacy_config_does_nothing_when_new_already_exists() {
+        let tmp = std::env::temp_dir().join(format!(
+            "orbitbar-migrate-test-{}-b",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let old_path = tmp.join("old").join("config.json");
+        let new_path = tmp.join("new").join("config.json");
+        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        fs::write(&old_path, r#"{"theme":"dark"}"#).unwrap();
+        fs::write(&new_path, r#"{"theme":"classic"}"#).unwrap();
+
+        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
+
+        assert!(!migrated, "must not report a migration");
+        assert_eq!(fs::read_to_string(&new_path).unwrap(), r#"{"theme":"classic"}"#);
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// When neither file exists, migration is a safe no-op: the ordinary
+    /// first-launch default writer takes over from there.
+    #[test]
+    fn migrate_legacy_config_does_nothing_when_neither_exists() {
+        let tmp = std::env::temp_dir().join(format!(
+            "orbitbar-migrate-test-{}-c",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let old_path = tmp.join("old").join("config.json");
+        let new_path = tmp.join("new").join("config.json");
+
+        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
+
+        assert!(!migrated);
+        assert!(!new_path.exists());
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// The default set must stay usable: the bar renders nothing if there is

@@ -1,6 +1,6 @@
 .env
 .env.*
 !.env.example
-hotbar/config.json
+legacy/windows-widget/config.json
 *.local.json
 .atl/

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  hotbar - a floating, always-on-top Windows bar built with PowerShell and WPF.
+  orbitbar - a floating, always-on-top Windows bar built with PowerShell and WPF.
 
 .DESCRIPTION
   A half-moon shaped widget that lives above every window (including the terminal),
@@ -10,7 +10,7 @@
   it snaps to the right edge of the monitor under its centre and remembers it in
   config.json for the next launch.
 
-  Everything visible comes from hotbar/config.json. Items are generated at startup
+  Everything visible comes from config.json next to this script. Items are generated at startup
   from a loop, so adding or reordering an entry is a JSON edit, never a code change.
   Each item carries an `action`:
 
@@ -39,35 +39,36 @@
     UX regression, not a fix.
   * Dragging is a window-level MouseLeftButtonDown handler. Buttons mark that
     routed event as handled, so only empty bar space drags; a click on a button
-    stays a click. On release, Snap-HotbarToActiveScreen latches the right edge to
+    stays a click. On release, Snap-OrbitbarToActiveScreen latches the right edge to
     the monitor under the window centre and persists the device name to config.
   * The two panels have different refresh contracts. The OmniRoute panel is a
     snapshot: it is read when it opens and then left alone. The usage panel is
     live, because a session balance that only updates on click is not a balance.
-    Its DispatcherTimer is owned by Set-HotbarPanelLines, the single choke point
+    Its DispatcherTimer is owned by Set-OrbitbarPanelLines, the single choke point
     every panel write goes through, so a timer can never outlive its panel.
   * Screen geometry is converted from physical pixels to device-independent units
     before it reaches Window.Left/Top. WinForms reports pixels and WPF positions in
     DIUs, so on a scaled display the two disagree by exactly the scale factor. The
     drag-snap round-trips the centre through the scale the same way.
-  * The data readers live in hotbar/lib as dot-sourced copies, so the widget is
-    standalone: it never reaches into the Herdr plugin's script tree.
+  * The data readers live in this script's own lib/ as dot-sourced copies, so
+    the widget is standalone: it never reaches into the Herdr plugin's script
+    tree.
 
 .PARAMETER SelfTest
   Validate the widget without a human: parses the XAML, loads the config, computes
   both positions, exercises the inline panel data read, opens the window for
-  SelfTestMs (400 ms by default) and closes it again. Prints HOTBAR_SELFTEST PASS
+  SelfTestMs (400 ms by default) and closes it again. Prints ORBITBAR_SELFTEST PASS
   and exits 0, or prints the failures and exits 1. It always terminates: the
   window is closed by a DispatcherTimer, with a background watchdog behind it in
   case the timer never fires. SelfTest deliberately skips the single-instance
   check, so it can always be run while a live bar is on screen.
 
 .EXAMPLE
-  .\hotbar.ps1
+  .\orbitbar.ps1
   Runs the bar. Right-click it for the menu, Escape also quits.
 
 .EXAMPLE
-  .\hotbar.ps1 -SelfTest
+  .\orbitbar.ps1 -SelfTest
   Headless-ish verification. Flashes a window for under a second.
 #>
 [CmdletBinding()]
@@ -88,9 +89,9 @@ $ErrorActionPreference = "Stop"
 
 # ---------------------------------------------------------------------------
 # Constants. Sizes are device-independent units (what WPF calls a DIP); only the
-# screen rectangle is converted from pixels (see Get-HotbarDpiScale).
+# screen rectangle is converted from pixels (see Get-OrbitbarDpiScale).
 # ---------------------------------------------------------------------------
-$script:HotbarMutexName = "Local\herdr.hotbar.widget.v1"
+$script:OrbitbarMutexName = "Local\orbitbar.widget.v1"
 $script:BarWidth = 72
 $script:BarHeight = 400
 $script:PanelWidth = 320
@@ -115,26 +116,27 @@ $script:ColorUp = "#6FCF6F"
 $script:ColorDown = "#E06C6C"
 $script:ColorWarn = "#E8B04A"
 
-# The hotbar folder's parent is the repository root, which is the default working
-# directory for a `run:` action. Paths are combined with [System.IO.Path]::Combine
-# on purpose: the first Join-Path in a process autoloads
-# Microsoft.PowerShell.Management, which costs about 95 ms before the window even
-# appears. Do not "tidy" these back into Join-Path.
-$script:HotbarRoot = $PSScriptRoot
-$script:RepoRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, ".."))
+# The orbitbar folder lives two levels under the repository root
+# (legacy/windows-widget/), which is the default working directory for a
+# `run:` action. Paths are combined with [System.IO.Path]::Combine on purpose:
+# the first Join-Path in a process autoloads Microsoft.PowerShell.Management,
+# which costs about 95 ms before the window even appears. Do not "tidy" these
+# back into Join-Path.
+$script:OrbitbarRoot = $PSScriptRoot
+$script:RepoRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, "..", ".."))
 $script:ConfigPath = [System.IO.Path]::Combine($PSScriptRoot, "config.json")
 
 # Actions the widget understands. Anything else is treated as a no-op: an
 # unrecognised action must never look like a successful one.
 $script:KnownActions = @("none", "omniroute-status", "agent-usage", "edit-config")
 
-# Live state, filled in by Read-HotbarConfig and New-HotbarWindow.
+# Live state, filled in by Read-OrbitbarConfig and New-OrbitbarWindow.
 $script:Config = $null
 $script:Margin = $script:DefaultMargin
 $script:Collapsed = $false
 $script:PanelOpen = $false
 # UsagePanelActive is deliberately separate from PanelOpen: the panel is open
-# either way, but only the usage panel owns a refresh timer. Set-HotbarPanelLines
+# either way, but only the usage panel owns a refresh timer. Set-OrbitbarPanelLines
 # is the only writer of both, so the timer cannot outlive the panel it refreshes.
 $script:UsagePanelActive = $false
 $script:UsageTimer = $null
@@ -149,7 +151,7 @@ $script:Window = $null
 # Window is created: WPF cannot create a window on an MTA thread, and a thread
 # cannot change its own apartment state.
 # ---------------------------------------------------------------------------
-function Invoke-HotbarSelfRelaunchOnSta {
+function Invoke-OrbitbarSelfRelaunchOnSta {
   $host32 = [System.IO.Path]::Combine($env:SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
   if (-not [System.IO.File]::Exists($host32)) { $host32 = "powershell.exe" }
 
@@ -163,11 +165,11 @@ function Invoke-HotbarSelfRelaunchOnSta {
 
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne [System.Threading.ApartmentState]::STA) {
   if ($SelfTest) {
-    Write-Output ("HOTBAR_SELFTEST FAIL: current thread is {0}; WPF needs STA. Run with: powershell -STA -File hotbar.ps1 -SelfTest" -f [System.Threading.Thread]::CurrentThread.ApartmentState)
+    Write-Output ("ORBITBAR_SELFTEST FAIL: current thread is {0}; WPF needs STA. Run with: powershell -STA -File orbitbar.ps1 -SelfTest" -f [System.Threading.Thread]::CurrentThread.ApartmentState)
     exit 1
   }
   # Re-launch once under -STA and behave exactly like that process.
-  exit (Invoke-HotbarSelfRelaunchOnSta)
+  exit (Invoke-OrbitbarSelfRelaunchOnSta)
 }
 
 # ---------------------------------------------------------------------------
@@ -188,7 +190,7 @@ $script:LibRoot = [System.IO.Path]::Combine($PSScriptRoot, "lib")
 foreach ($needed in @("Invoke-Native.ps1", "Read-SqliteQuery.ps1", "Get-AgentUsage.ps1", "Get-AgentPricing.ps1")) {
   $path = [System.IO.Path]::Combine($script:LibRoot, $needed)
   if (-not [System.IO.File]::Exists($path)) {
-    Write-Output ("hotbar: missing data helper " + $path)
+    Write-Output ("orbitbar: missing data helper " + $path)
     exit 1
   }
 }
@@ -199,12 +201,11 @@ foreach ($needed in @("Invoke-Native.ps1", "Read-SqliteQuery.ps1", "Get-AgentUsa
 . ([System.IO.Path]::Combine($script:LibRoot, "Get-AgentPricing.ps1"))
 
 # OmniRoute is an optional extension (odd/orbitbar-rebrand O3): its readers live
-# under extensions/omniroute/hotbar/, not in hotbar/lib. Load them only when
-# present, so a clone without the extension still runs the bar; the
-# omniroute-status item then renders "extension not installed" (see
-# Get-HotbarOmniRouteSnapshot) instead of failing on an undefined function.
-$script:RepoRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, ".."))
-$script:OmniRouteExtensionLib = [System.IO.Path]::Combine($script:RepoRoot, "extensions", "omniroute", "hotbar")
+# under extensions/omniroute/legacy-widget/, not in this widget's own lib.
+# Load them only when present, so a clone without the extension still runs the
+# bar; the omniroute-status item then renders "extension not installed" (see
+# Get-OrbitbarOmniRouteSnapshot) instead of failing on an undefined function.
+$script:OmniRouteExtensionLib = [System.IO.Path]::Combine($script:RepoRoot, "extensions", "omniroute", "legacy-widget")
 $omniRouteStatusPath = [System.IO.Path]::Combine($script:OmniRouteExtensionLib, "Get-OmniRouteStatus.ps1")
 $omniRouteCombosPath = [System.IO.Path]::Combine($script:OmniRouteExtensionLib, "Get-OmniRouteCombos.ps1")
 $script:OmniRouteExtensionAvailable = ([System.IO.File]::Exists($omniRouteStatusPath) -and [System.IO.File]::Exists($omniRouteCombosPath))
@@ -218,10 +219,10 @@ if ($script:OmniRouteExtensionAvailable) {
 # x:Class is deliberately absent - this is loose XAML parsed by XamlReader, which has
 # no code-behind to resolve a class against.
 # ---------------------------------------------------------------------------
-$script:HotbarXaml = @'
+$script:OrbitbarXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hotbar"
+        Title="orbitbar"
         Width="72"
         Height="400"
         WindowStartupLocation="Manual"
@@ -328,7 +329,7 @@ $script:HotbarXaml = @'
          so pinning it to 72 would constrain the panel to nothing and centre the
          whole thing inside the wider panel-open window. The bar's width comes
          from the last Grid column instead, and the window width comes from
-         Get-HotbarGeometry. -->
+         Get-OrbitbarGeometry. -->
     <Border x:Name="BarBorder"
             Background="{StaticResource BarFill}"
             BorderBrush="{StaticResource BarStroke}"
@@ -405,7 +406,7 @@ $script:HotbarXaml = @'
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-function Read-HotbarConfig {
+function Read-OrbitbarConfig {
   [CmdletBinding()]
   param([string]$Path = $script:ConfigPath)
 
@@ -429,7 +430,7 @@ function Read-HotbarConfig {
 # "0x2733" -> the character U+2733. The 0x prefix is optional and a code point
 # above the BMP is rejected rather than silently truncated, because [char] would
 # wrap it into an unrelated glyph and the bar would show nonsense.
-function ConvertFrom-HotbarGlyph {
+function ConvertFrom-OrbitbarGlyph {
   [CmdletBinding()]
   param([string]$Code)
 
@@ -452,10 +453,10 @@ function ConvertFrom-HotbarGlyph {
 .SYNOPSIS
   The monitor the bar lives on. "primary" (or an absent field) means the primary
   display; any other value is matched against the WinForms display device name
-  (for example "\\.\DISPLAY2"), which is what Set-HotbarPersistedMonitor writes
+  (for example "\\.\DISPLAY2"), which is what Set-OrbitbarPersistedMonitor writes
   back after the bar is dragged to another monitor.
 #>
-function Get-HotbarScreenFromConfig {
+function Get-OrbitbarScreenFromConfig {
   param($Config)
 
   $screen = [System.Windows.Forms.Screen]::PrimaryScreen
@@ -471,8 +472,8 @@ function Get-HotbarScreenFromConfig {
 
 # The widget starts collapsed when the config says so, so the first frame after a
 # restart is the same every time instead of depending on what was on screen.
-function Initialize-HotbarStateFromConfig {
-  $config = Read-HotbarConfig
+function Initialize-OrbitbarStateFromConfig {
+  $config = Read-OrbitbarConfig
   $script:Config = $config
 
   $margin = $script:DefaultMargin
@@ -482,7 +483,7 @@ function Initialize-HotbarStateFromConfig {
   }
   $script:Margin = $margin
 
-  $script:ActiveScreen = Get-HotbarScreenFromConfig -Config $config
+  $script:ActiveScreen = Get-OrbitbarScreenFromConfig -Config $config
 
   $collapsed = $false
   if ($null -ne $config.collapsed) { $collapsed = [bool]$config.collapsed }
@@ -501,7 +502,7 @@ function Initialize-HotbarStateFromConfig {
 # aware, so the process-wide GDI DPI is the scale both views must agree on. The
 # screen DC is read directly with System.Drawing because GetDpiForMonitor would need
 # an Add-Type compile, and this is on the path between the click and the window.
-function Get-HotbarDpiScale {
+function Get-OrbitbarDpiScale {
   try {
     $device = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
     $dpiX = $device.DpiX
@@ -527,7 +528,7 @@ function Get-HotbarDpiScale {
   config.json), or the monitor the bar was dragged to last time (persisted as its
   display device name), or the monitor it was dragged to in this session.
 #>
-function Get-HotbarGeometry {
+function Get-OrbitbarGeometry {
   [CmdletBinding()]
   param(
     [bool]$Collapsed,
@@ -538,7 +539,7 @@ function Get-HotbarGeometry {
   if ($null -eq $Screen) { $Screen = $script:ActiveScreen }
   if ($null -eq $Screen) { $Screen = [System.Windows.Forms.Screen]::PrimaryScreen }
   $working = $Screen.WorkingArea
-  $scale = Get-HotbarDpiScale
+  $scale = Get-OrbitbarDpiScale
 
   $right = $working.Right / $scale
   $top = $working.Top / $scale
@@ -563,9 +564,9 @@ function Get-HotbarGeometry {
   }
 }
 
-function Update-HotbarGeometry {
+function Update-OrbitbarGeometry {
   if ($null -eq $script:Window) { return }
-  $geometry = Get-HotbarGeometry -Collapsed $script:Collapsed -PanelOpen $script:PanelOpen
+  $geometry = Get-OrbitbarGeometry -Collapsed $script:Collapsed -PanelOpen $script:PanelOpen
   $script:Window.Left = $geometry.X
   $script:Window.Top = $geometry.Y
   $script:Window.Width = $geometry.Width
@@ -583,10 +584,10 @@ function Update-HotbarGeometry {
   persisted to config.json so a restart comes back to the same monitor; a failed
   write keeps the session placement and only forgets it on the next launch.
 #>
-function Snap-HotbarToActiveScreen {
+function Snap-OrbitbarToActiveScreen {
   if ($null -eq $script:Window) { return }
 
-  $scale = Get-HotbarDpiScale
+  $scale = Get-OrbitbarDpiScale
   $centerX = $script:Window.Left + ($script:Window.Width / 2)
   $centerY = $script:Window.Top + ($script:Window.Height / 2)
   $point = New-Object System.Drawing.Point(
@@ -597,19 +598,19 @@ function Snap-HotbarToActiveScreen {
   if ($null -ne $screen -and $null -ne $script:ActiveScreen -and
       $screen.DeviceName -ne $script:ActiveScreen.DeviceName) {
     $script:ActiveScreen = $screen
-    Set-HotbarPersistedMonitor -Screen $screen
+    Set-OrbitbarPersistedMonitor -Screen $screen
   }
-  Update-HotbarGeometry
+  Update-OrbitbarGeometry
 }
 
 # Writes the `monitor` field of config.json. The checked-in default is "primary";
 # after a drag it becomes the display device name ("\\.\DISPLAY2" and friends),
-# which is exactly what Get-HotbarScreenFromConfig matches on the next launch.
-function Set-HotbarPersistedMonitor {
+# which is exactly what Get-OrbitbarScreenFromConfig matches on the next launch.
+function Set-OrbitbarPersistedMonitor {
   param($Screen)
 
   try {
-    $config = Read-HotbarConfig
+    $config = Read-OrbitbarConfig
     if ([string]$config.monitor -eq [string]$Screen.DeviceName) { return }
     $config.monitor = [string]$Screen.DeviceName
     $json = $config | ConvertTo-Json -Depth 6
@@ -622,7 +623,7 @@ function Set-HotbarPersistedMonitor {
 # ---------------------------------------------------------------------------
 # Window construction
 # ---------------------------------------------------------------------------
-function Get-HotbarElement {
+function Get-OrbitbarElement {
   param($Window, [string]$Name)
   $element = $Window.FindName($Name)
   if ($null -eq $element) { throw ("XAML element not found: " + $Name) }
@@ -653,12 +654,12 @@ function Get-HotbarElement {
   path reads a zero-size element if the window measures later, and the handler
   catches the resize that layout produces.
 #>
-function Update-HotbarBarClip {
+function Update-OrbitbarBarClip {
   [CmdletBinding()]
   param()
 
   if ($null -eq $script:Window) { return }
-  $items = Get-HotbarElement -Window $script:Window -Name "ItemsPanel"
+  $items = Get-OrbitbarElement -Window $script:Window -Name "ItemsPanel"
   $w = [double]$items.ActualWidth
   $h = [double]$items.ActualHeight
   if ($w -le 0 -or $h -le 0) { return }
@@ -691,7 +692,7 @@ function Update-HotbarBarClip {
   $items.Clip = $geometry
 }
 
-function New-HotbarTextBlock {
+function New-OrbitbarTextBlock {
   param(
     [string]$Text,
     [string]$Color,
@@ -719,7 +720,7 @@ function New-HotbarTextBlock {
   PowerShell loop variable captured by an event handler is the classic late-binding
   bug: every button would end up dispatching the last item in the list.
 #>
-function Add-HotbarItemButton {
+function Add-OrbitbarItemButton {
   param(
     $Panel,
     $Item,
@@ -733,7 +734,7 @@ function Add-HotbarItemButton {
   $button.Tag = $Item
 
   $label = New-Object System.Windows.Controls.TextBlock
-  $label.Text = ConvertFrom-HotbarGlyph $Item.glyph
+  $label.Text = ConvertFrom-OrbitbarGlyph $Item.glyph
   $label.FontFamily = New-Object System.Windows.Media.FontFamily($script:GlyphFont)
   $label.FontSize = 20
   $label.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
@@ -743,19 +744,19 @@ function Add-HotbarItemButton {
   $button.Add_Click({
       param($sender, $eventArgs)
       if ($null -eq $sender) { return }
-      Invoke-HotbarItemAction -Item $sender.Tag
+      Invoke-OrbitbarItemAction -Item $sender.Tag
     })
 
   $null = $Panel.Children.Add($button)
   return $button
 }
 
-function Sync-HotbarItems {
-  $panel = Get-HotbarElement -Window $script:Window -Name "ItemsPanel"
+function Sync-OrbitbarItems {
+  $panel = Get-OrbitbarElement -Window $script:Window -Name "ItemsPanel"
   $panel.Children.Clear()
   if ($null -eq $script:Config.items) { return 0 }
   foreach ($item in $script:Config.items) {
-    $null = Add-HotbarItemButton -Panel $panel -Item $item -StyleKey "ItemButton"
+    $null = Add-OrbitbarItemButton -Panel $panel -Item $item -StyleKey "ItemButton"
   }
   return $panel.Children.Count
 }
@@ -768,11 +769,11 @@ function Sync-HotbarItems {
   [xml] first, so a malformed here-string fails as a structural XML error instead
   of an opaque XamlReader exception. This is also the SelfTest's XAML check.
 #>
-function New-HotbarWindow {
+function New-OrbitbarWindow {
   [CmdletBinding()]
   param()
 
-  $document = [xml]$script:HotbarXaml
+  $document = [xml]$script:OrbitbarXaml
   $window = [System.Windows.Markup.XamlReader]::Parse($document.OuterXml)
 
   $script:Window = $window
@@ -780,21 +781,21 @@ function New-HotbarWindow {
   # Touch every named element once, so a typo in an x:Name is a load-time error and
   # not a null reference on the first click.
   foreach ($name in @("BarBorder", "TabBorder", "PanelBorder", "PanelStack", "ItemsPanel", "CollapseHandle", "ExpandButton")) {
-    $null = Get-HotbarElement -Window $window -Name $name
+    $null = Get-OrbitbarElement -Window $window -Name $name
   }
 
-  $null = Sync-HotbarItems
+  $null = Sync-OrbitbarItems
 
-  $collapse = Get-HotbarElement -Window $window -Name "CollapseHandle"
-  $collapse.Add_Click({ Set-HotbarCollapsed -Collapsed $true })
+  $collapse = Get-OrbitbarElement -Window $window -Name "CollapseHandle"
+  $collapse.Add_Click({ Set-OrbitbarCollapsed -Collapsed $true })
 
-  $expand = Get-HotbarElement -Window $window -Name "ExpandButton"
-  $expand.Add_Click({ Set-HotbarCollapsed -Collapsed $false })
+  $expand = Get-OrbitbarElement -Window $window -Name "ExpandButton"
+  $expand.Add_Click({ Set-OrbitbarCollapsed -Collapsed $false })
 
   # A widget with no way out is a defect, not a design choice. Right-click is the
   # discoverable path; Escape is the fast one, and it works after the first click
   # has given the window focus.
-  $window.ContextMenu = New-HotbarContextMenu
+  $window.ContextMenu = New-OrbitbarContextMenu
   $window.Add_KeyDown({
       param($sender, $eventArgs)
       if ($null -ne $eventArgs -and $eventArgs.Key -eq [System.Windows.Input.Key]::Escape) { $window.Close() }
@@ -805,7 +806,7 @@ function New-HotbarWindow {
   $window.Add_Closed({
       $script:UsagePanelActive = $false
       $script:AgentPanelActive = $false
-      Stop-HotbarUsagePanelTimer
+      Stop-OrbitbarUsagePanelTimer
     })
 
   # Drag the bar between monitors. Buttons mark MouseLeftButtonDown as handled
@@ -816,12 +817,12 @@ function New-HotbarWindow {
       param($sender, $eventArgs)
       if ($null -ne $eventArgs -or -not $eventArgs.Handled) {
         try { $window.DragMove() } catch { }
-        Snap-HotbarToActiveScreen
+        Snap-OrbitbarToActiveScreen
       }
     })
 
-  $bar = Get-HotbarElement -Window $window -Name "BarBorder"
-  $tab = Get-HotbarElement -Window $window -Name "TabBorder"
+  $bar = Get-OrbitbarElement -Window $window -Name "BarBorder"
+  $tab = Get-OrbitbarElement -Window $window -Name "TabBorder"
   if ($script:Collapsed) {
     $bar.Visibility = [System.Windows.Visibility]::Collapsed
     $tab.Visibility = [System.Windows.Visibility]::Visible
@@ -834,39 +835,39 @@ function New-HotbarWindow {
   # happy-path first paint can arrive before layout, and the SizeChanged handler
   # catches the resize that follows. Guarded on the element itself, so the
   # Collapsed tab state (no bar at all) still wires a no-op.
-  $items = Get-HotbarElement -Window $window -Name "ItemsPanel"
+  $items = Get-OrbitbarElement -Window $window -Name "ItemsPanel"
   $items.Add_SizeChanged({
       param($sender, $eventArgs)
-      Update-HotbarBarClip
+      Update-OrbitbarBarClip
     })
-  Update-HotbarBarClip
+  Update-OrbitbarBarClip
 
-  Update-HotbarGeometry
+  Update-OrbitbarGeometry
   return $window
 }
 
-function New-HotbarContextMenu {
+function New-OrbitbarContextMenu {
   $menu = New-Object System.Windows.Controls.ContextMenu
 
   $edit = New-Object System.Windows.Controls.MenuItem
   $edit.Header = "Edit config.json"
-  $edit.Add_Click({ Open-HotbarConfig })
+  $edit.Add_Click({ Open-OrbitbarConfig })
   $null = $menu.Items.Add($edit)
 
   $reload = New-Object System.Windows.Controls.MenuItem
   $reload.Header = "Reload config"
   $reload.Add_Click({
       try {
-        $null = Initialize-HotbarStateFromConfig
-        $count = Sync-HotbarItems
-        Set-HotbarPanelLines -Open $true -Lines @(
-          (New-HotbarLine "hotbar" $script:ColorGold 11 $true),
-          (New-HotbarLine ("  reloaded " + $count + " items") $script:ColorDim 9)
+        $null = Initialize-OrbitbarStateFromConfig
+        $count = Sync-OrbitbarItems
+        Set-OrbitbarPanelLines -Open $true -Lines @(
+          (New-OrbitbarLine "orbitbar" $script:ColorGold 11 $true),
+          (New-OrbitbarLine ("  reloaded " + $count + " items") $script:ColorDim 9)
         )
       } catch {
-        Set-HotbarPanelLines -Open $true -Lines @(
-          (New-HotbarLine "hotbar" $script:ColorGold 11 $true),
-          (New-HotbarErrorLine $_.Exception.Message "  reload failed")
+        Set-OrbitbarPanelLines -Open $true -Lines @(
+          (New-OrbitbarLine "orbitbar" $script:ColorGold 11 $true),
+          (New-OrbitbarErrorLine $_.Exception.Message "  reload failed")
         )
       }
     })
@@ -874,11 +875,11 @@ function New-HotbarContextMenu {
 
   $collapse = New-Object System.Windows.Controls.MenuItem
   $collapse.Header = "Collapse bar"
-  $collapse.Add_Click({ Set-HotbarCollapsed -Collapsed $true })
+  $collapse.Add_Click({ Set-OrbitbarCollapsed -Collapsed $true })
   $null = $menu.Items.Add($collapse)
 
   $quit = New-Object System.Windows.Controls.MenuItem
-  $quit.Header = "Quit hotbar"
+  $quit.Header = "Quit orbitbar"
   $quit.Add_Click({ $script:Window.Close() })
   $null = $menu.Items.Add($quit)
 
@@ -888,7 +889,7 @@ function New-HotbarContextMenu {
 # ---------------------------------------------------------------------------
 # Collapse / expand
 # ---------------------------------------------------------------------------
-function Set-HotbarCollapsed {
+function Set-OrbitbarCollapsed {
   [CmdletBinding()]
   param([bool]$Collapsed)
 
@@ -900,12 +901,12 @@ function Set-HotbarCollapsed {
   if ($Collapsed) {
     $script:PanelOpen = $false
     $script:UsagePanelActive = $false
-    Stop-HotbarUsagePanelTimer
+    Stop-OrbitbarUsagePanelTimer
   }
 
-  $bar = Get-HotbarElement -Window $script:Window -Name "BarBorder"
-  $tab = Get-HotbarElement -Window $script:Window -Name "TabBorder"
-  $panelBorder = Get-HotbarElement -Window $script:Window -Name "PanelBorder"
+  $bar = Get-OrbitbarElement -Window $script:Window -Name "BarBorder"
+  $tab = Get-OrbitbarElement -Window $script:Window -Name "TabBorder"
+  $panelBorder = Get-OrbitbarElement -Window $script:Window -Name "PanelBorder"
 
   if ($Collapsed) {
     $bar.Visibility = [System.Windows.Visibility]::Collapsed
@@ -916,13 +917,13 @@ function Set-HotbarCollapsed {
     $tab.Visibility = [System.Windows.Visibility]::Collapsed
   }
 
-  Update-HotbarGeometry
+  Update-OrbitbarGeometry
 }
 
 # ---------------------------------------------------------------------------
 # Inline OmniRoute panel
 # ---------------------------------------------------------------------------
-function New-HotbarLine {
+function New-OrbitbarLine {
   param([string]$Text, [string]$Color, [double]$Size = 0, [bool]$Bold = $false)
   return [pscustomobject]@{ Text = $Text; Color = $Color; Size = $Size; Bold = $Bold }
 }
@@ -930,14 +931,14 @@ function New-HotbarLine {
 # One honest line when something could not be read. The reason is kept, because
 # "sin datos" with no cause is the same failure mode as an empty list: the reader
 # cannot tell the user whether the gateway is down or the database is missing.
-function New-HotbarErrorLine {
+function New-OrbitbarErrorLine {
   param([string]$Reason, [string]$Prefix = "  sin datos")
   $reason = ([string]$Reason).Trim()
   if (-not $reason) { $reason = "no reason reported" }
-  return (New-HotbarLine (Format-HotbarLine ($Prefix + " (" + $reason + ")")) $script:ColorWarn 9)
+  return (New-OrbitbarLine (Format-OrbitbarLine ($Prefix + " (" + $reason + ")")) $script:ColorWarn 9)
 }
 
-function Format-HotbarLine {
+function Format-OrbitbarLine {
   param([string]$Text, [int]$MaxChars = 0)
   if ($MaxChars -le 0) { $MaxChars = $script:MaxPanelChars }
   $text = [string]$Text
@@ -945,7 +946,7 @@ function Format-HotbarLine {
   return ($text.Substring(0, $MaxChars - 3) + "...")
 }
 
-function Get-HotbarFirstLine {
+function Get-OrbitbarFirstLine {
   param([string]$Text)
   if (-not $Text) { return "" }
   foreach ($line in ($Text -split "`r?`n")) {
@@ -974,7 +975,7 @@ function Get-HotbarFirstLine {
   key, and this widget never touches one), and a failed read is reported as a
   failure rather than as an empty configuration.
 #>
-function Get-HotbarOmniRouteSnapshot {
+function Get-OrbitbarOmniRouteSnapshot {
   [CmdletBinding()]
   param(
     [int]$NetstatTimeoutMs = 3000,
@@ -991,14 +992,14 @@ function Get-HotbarOmniRouteSnapshot {
   }
 
   $portJob = $null
-  try { $portJob = Start-HotbarGatewayProbe } catch { }
+  try { $portJob = Start-OrbitbarGatewayProbe } catch { }
 
   $comboJob = $null
   try { $comboJob = Start-OmniRouteComboRead -BusyTimeoutMs $BusyTimeoutMs } catch { }
 
   $gateway = $null
   if ($null -ne $portJob) {
-    try { $gateway = Complete-HotbarGatewayProbe -Job $portJob -TimeoutMs $NetstatTimeoutMs } catch { }
+    try { $gateway = Complete-OrbitbarGatewayProbe -Job $portJob -TimeoutMs $NetstatTimeoutMs } catch { }
   }
   if ($null -eq $gateway) {
     $gateway = [pscustomobject]@{ Up = $false; Port = $script:GatewayPort; Detail = "probe failed" }
@@ -1019,41 +1020,41 @@ function Get-HotbarOmniRouteSnapshot {
   }
 }
 
-function Get-HotbarOmniRouteLines {
+function Get-OrbitbarOmniRouteLines {
   [CmdletBinding()]
   param([Parameter(Mandatory = $true)]$Snapshot)
 
   $lines = @()
-  $lines += New-HotbarLine "OmniRoute gateway" $script:ColorGold 11 $true
+  $lines += New-OrbitbarLine "OmniRoute gateway" $script:ColorGold 11 $true
 
   if ($Snapshot.ExtensionMissing) {
-    $lines += New-HotbarLine "  extension not installed" $script:ColorDim 9
-    $lines += New-HotbarLine (Format-HotbarLine "  see extensions/README.md") $script:ColorDim 9
-    $lines += New-HotbarLine (Format-HotbarLine "  click the icon again to close") $script:ColorDim 9
+    $lines += New-OrbitbarLine "  extension not installed" $script:ColorDim 9
+    $lines += New-OrbitbarLine (Format-OrbitbarLine "  see extensions/README.md") $script:ColorDim 9
+    $lines += New-OrbitbarLine (Format-OrbitbarLine "  click the icon again to close") $script:ColorDim 9
     return $lines
   }
 
   if ($Snapshot.Gateway.Up) {
-    $lines += New-HotbarLine ("  UP     localhost:" + $Snapshot.Gateway.Port) $script:ColorUp
+    $lines += New-OrbitbarLine ("  UP     localhost:" + $Snapshot.Gateway.Port) $script:ColorUp
   } else {
-    $lines += New-HotbarLine ("  DOWN   localhost:" + $Snapshot.Gateway.Port) $script:ColorDown
-    $lines += New-HotbarLine (Format-HotbarLine ("  " + $Snapshot.Gateway.Detail)) $script:ColorDim 9
+    $lines += New-OrbitbarLine ("  DOWN   localhost:" + $Snapshot.Gateway.Port) $script:ColorDown
+    $lines += New-OrbitbarLine (Format-OrbitbarLine ("  " + $Snapshot.Gateway.Detail)) $script:ColorDim 9
   }
-  $lines += New-HotbarLine (Format-HotbarLine ("  http://localhost:" + $Snapshot.Gateway.Port + "  -  " + $Snapshot.Combos.Provider)) $script:ColorDim 9
-  $lines += New-HotbarLine "" $script:ColorDim 5
-  $lines += New-HotbarLine "Combos" $script:ColorGold 10 $true
+  $lines += New-OrbitbarLine (Format-OrbitbarLine ("  http://localhost:" + $Snapshot.Gateway.Port + "  -  " + $Snapshot.Combos.Provider)) $script:ColorDim 9
+  $lines += New-OrbitbarLine "" $script:ColorDim 5
+  $lines += New-OrbitbarLine "Combos" $script:ColorGold 10 $true
 
   $read = $Snapshot.Combos
   if (-not $read.Ok) {
-    $lines += New-HotbarErrorLine (Get-HotbarFirstLine $read.Error) "  combos: sin datos"
+    $lines += New-OrbitbarErrorLine (Get-OrbitbarFirstLine $read.Error) "  combos: sin datos"
   } elseif (@($read.Combos).Count -eq 0) {
-    $lines += New-HotbarLine "  sin combos" $script:ColorDim 9
+    $lines += New-OrbitbarLine "  sin combos" $script:ColorDim 9
   } else {
     foreach ($combo in $read.Combos) {
       $state = if ($combo.Enabled) { "enabled" } else { "disabled" }
       $text = "  " + ([string]$combo.Name).PadRight(16) + " [" + ([string]$combo.Strategy).PadRight(9) + "] " + $state
       $color = if ($combo.Enabled) { $script:ColorText } else { $script:ColorDim }
-      $lines += New-HotbarLine (Format-HotbarLine $text) $color
+      $lines += New-OrbitbarLine (Format-OrbitbarLine $text) $color
     }
   }
 
@@ -1061,13 +1062,13 @@ function Get-HotbarOmniRouteLines {
   # gateway keeps it in runtime memory and only exposes it through an authenticated
   # route, so "sin datos" is the truthful answer and a marker would be a guess.
   if ($read.ActiveComboName) {
-    $lines += New-HotbarLine (Format-HotbarLine ("  activo: " + $read.ActiveComboName)) $script:ColorGold 9
+    $lines += New-OrbitbarLine (Format-OrbitbarLine ("  activo: " + $read.ActiveComboName)) $script:ColorGold 9
   } else {
-    $lines += New-HotbarLine "  combo activo: sin datos" $script:ColorDim 9
+    $lines += New-OrbitbarLine "  combo activo: sin datos" $script:ColorDim 9
   }
 
-  $lines += New-HotbarLine "" $script:ColorDim 5
-  $lines += New-HotbarLine (Format-HotbarLine ("  sample " + $Snapshot.TakenAt.ToString("HH:mm:ss") + " - click the icon again to close")) $script:ColorDim 9
+  $lines += New-OrbitbarLine "" $script:ColorDim 5
+  $lines += New-OrbitbarLine (Format-OrbitbarLine ("  sample " + $Snapshot.TakenAt.ToString("HH:mm:ss") + " - click the icon again to close")) $script:ColorDim 9
   return $lines
 }
 
@@ -1093,7 +1094,7 @@ function Get-HotbarOmniRouteLines {
   dies with "the property 'Visibility' cannot be found on this object". Same class
   of bug as the $Port/$GatewayPort collision in Get-OmniRouteStatus.ps1.
 #>
-function Set-HotbarPanelLines {
+function Set-OrbitbarPanelLines {
   [CmdletBinding()]
   param(
     [object[]]$Lines,
@@ -1102,17 +1103,17 @@ function Set-HotbarPanelLines {
   )
 
   if ($null -eq $script:Window) { return }
-  $stack = Get-HotbarElement -Window $script:Window -Name "PanelStack"
-  $panelBorder = Get-HotbarElement -Window $script:Window -Name "PanelBorder"
+  $stack = Get-OrbitbarElement -Window $script:Window -Name "PanelStack"
+  $panelBorder = Get-OrbitbarElement -Window $script:Window -Name "PanelBorder"
 
   $stack.Children.Clear()
   foreach ($line in $Lines) {
-    $null = $stack.Children.Add((New-HotbarTextBlock -Text $line.Text -Color $line.Color -Size $line.Size -Bold $line.Bold))
+    $null = $stack.Children.Add((New-OrbitbarTextBlock -Text $line.Text -Color $line.Color -Size $line.Size -Bold $line.Bold))
   }
 
   $script:PanelOpen = $Open
   $script:UsagePanelActive = ($Open -and $Panel -eq "usage")
-  if (-not $script:UsagePanelActive) { Stop-HotbarUsagePanelTimer }
+  if (-not $script:UsagePanelActive) { Stop-OrbitbarUsagePanelTimer }
   $script:AgentPanelActive = ($Open -and $Panel.StartsWith("agent:"))
 
   if ($Open) {
@@ -1120,7 +1121,7 @@ function Set-HotbarPanelLines {
   } else {
     $panelBorder.Visibility = [System.Windows.Visibility]::Collapsed
   }
-  Update-HotbarGeometry
+  Update-OrbitbarGeometry
 }
 
 <#
@@ -1133,21 +1134,21 @@ function Set-HotbarPanelLines {
   of the desktop is worse than a click. The usage panel below is the deliberate
   exception, and the reason it is safe is that its timer dies with the panel.
 #>
-function Toggle-HotbarPanel {
+function Toggle-OrbitbarPanel {
   if ($script:PanelOpen) {
-    Set-HotbarPanelLines -Lines @() -Open $false
+    Set-OrbitbarPanelLines -Lines @() -Open $false
     return
   }
 
   # Show the frame first with a placeholder, so a slow read reads as "busy" instead
   # of as a button that did nothing.
-  Set-HotbarPanelLines -Open $true -Lines @(
-    (New-HotbarLine "OmniRoute gateway" $script:ColorGold 11 $true),
-    (New-HotbarLine "  reading..." $script:ColorDim 9)
+  Set-OrbitbarPanelLines -Open $true -Lines @(
+    (New-OrbitbarLine "OmniRoute gateway" $script:ColorGold 11 $true),
+    (New-OrbitbarLine "  reading..." $script:ColorDim 9)
   )
 
-  $snapshot = Get-HotbarOmniRouteSnapshot
-  Set-HotbarPanelLines -Open $true -Lines (Get-HotbarOmniRouteLines -Snapshot $snapshot)
+  $snapshot = Get-OrbitbarOmniRouteSnapshot
+  Set-OrbitbarPanelLines -Open $true -Lines (Get-OrbitbarOmniRouteLines -Snapshot $snapshot)
 }
 
 # ---------------------------------------------------------------------------
@@ -1157,7 +1158,7 @@ function Toggle-HotbarPanel {
 # Thousands separated with dots, not commas: the panel is Spanish and the
 # numbers are the part everyone reads. Invariant culture under the hood, so the
 # separator cannot follow some other machine's locale.
-function Format-HotbarCount {
+function Format-OrbitbarCount {
   param([double]$Value)
 
   $text = $Value.ToString("#,##0", [System.Globalization.CultureInfo]::InvariantCulture)
@@ -1166,7 +1167,7 @@ function Format-HotbarCount {
 
 # Two decimals, invariant, so a money value never renders as "12,3" or "12.345"
 # depending on the thread's culture.
-function Format-HotbarMoney {
+function Format-OrbitbarMoney {
   param($Cost)
 
   try { $value = [double]$Cost } catch { return "" }
@@ -1177,7 +1178,7 @@ function Format-HotbarMoney {
 # millions, with the dot thousands separator. Raw numbers stay under 5 chars in
 # the ranges these stores actually produce, which is what keeps a repo line from
 # overflowing the panel width.
-function Format-HotbarCompactCount {
+function Format-OrbitbarCompactCount {
   param([double]$Value)
 
   if ($Value -lt 1000) { return ([long]$Value).ToString([System.Globalization.CultureInfo]::InvariantCulture) }
@@ -1212,12 +1213,12 @@ function Format-HotbarCompactCount {
   Spanish without accents on purpose: every .ps1 in this widget is pure ASCII so
   the bytes survive any editor and code page.
 #>
-function Get-HotbarUsageLines {
+function Get-OrbitbarUsageLines {
   [CmdletBinding()]
   param([Parameter(Mandatory = $true)]$Snapshot)
 
   $lines = @()
-  $lines += New-HotbarLine "Uso de sesion" $script:ColorGold 11 $true
+  $lines += New-OrbitbarLine "Uso de sesion" $script:ColorGold 11 $true
 
   $takenAt = $null
   $anyApprox = $false
@@ -1228,59 +1229,59 @@ function Get-HotbarUsageLines {
     if ($usage.Estimated) { $anyEst = $true }
 
     if (-not $usage.Ok) {
-      $lines += New-HotbarLine ("  " + $usage.Agent) $script:ColorGold 10 $true
-      $lines += New-HotbarErrorLine (Get-HotbarFirstLine $usage.Error) ("  " + $usage.Agent + ": sin datos")
+      $lines += New-OrbitbarLine ("  " + $usage.Agent) $script:ColorGold 10 $true
+      $lines += New-OrbitbarErrorLine (Get-OrbitbarFirstLine $usage.Error) ("  " + $usage.Agent + ": sin datos")
       continue
     }
 
     $approx = ""
     if ($usage.Approximate) { $approx = "~ " }
-    $lines += New-HotbarLine ("  " + $usage.Agent + $approx) $script:ColorGold 10 $true
+    $lines += New-OrbitbarLine ("  " + $usage.Agent + $approx) $script:ColorGold 10 $true
 
-    $tokens = "  in " + (Format-HotbarCount $usage.InputTokens) +
-      " out " + (Format-HotbarCount $usage.OutputTokens) +
-      " cache " + (Format-HotbarCount $usage.CacheTokens)
-    $lines += New-HotbarLine (Format-HotbarLine $tokens) $script:ColorText
+    $tokens = "  in " + (Format-OrbitbarCount $usage.InputTokens) +
+      " out " + (Format-OrbitbarCount $usage.OutputTokens) +
+      " cache " + (Format-OrbitbarCount $usage.CacheTokens)
+    $lines += New-OrbitbarLine (Format-OrbitbarLine $tokens) $script:ColorText
 
     # Reasoning tokens and the model share a line: they are both context, and a
     # panel that wrapped them would push the money out of view.
     $context = ""
-    if ($usage.ReasoningTokens -gt 0) { $context = "reas " + (Format-HotbarCount $usage.ReasoningTokens) + "  " }
+    if ($usage.ReasoningTokens -gt 0) { $context = "reas " + (Format-OrbitbarCount $usage.ReasoningTokens) + "  " }
     if ($usage.Model) {
       $context = $context + $usage.Model
       if ($usage.Local -and $null -ne $usage.Cost -and [double]$usage.Cost -eq 0) { $context = $context + " (modelo local)" }
     }
-    if ($context) { $lines += New-HotbarLine (Format-HotbarLine ("  " + $context)) $script:ColorDim 9 }
+    if ($context) { $lines += New-OrbitbarLine (Format-OrbitbarLine ("  " + $context)) $script:ColorDim 9 }
 
     if ($null -eq $usage.Cost) {
-      $lines += New-HotbarLine "  costo: sin datos" $script:ColorDim 9
+      $lines += New-OrbitbarLine "  costo: sin datos" $script:ColorDim 9
     } else {
-      $money = Format-HotbarMoney $usage.Cost
+      $money = Format-OrbitbarMoney $usage.Cost
       if ($usage.Estimated) { $money = $money + " (est)" }
-      $lines += New-HotbarLine ("  " + $money) $script:ColorUp 10 $true
+      $lines += New-OrbitbarLine ("  " + $money) $script:ColorUp 10 $true
     }
   }
 
   # Both markers need a legend or they read as typos. The ~ sits right after the
   # agent name (a trim from the right would eat it); (est) hangs off the money.
   if ($anyApprox) {
-    $lines += New-HotbarLine (Format-HotbarLine "  ~ = lectura parcial") $script:ColorDim 9
+    $lines += New-OrbitbarLine (Format-OrbitbarLine "  ~ = lectura parcial") $script:ColorDim 9
   }
   if ($anyEst) {
-    $lines += New-HotbarLine (Format-HotbarLine "  (est) = costo estimado") $script:ColorDim 9
+    $lines += New-OrbitbarLine (Format-OrbitbarLine "  (est) = costo estimado") $script:ColorDim 9
   }
 
-  $lines += New-HotbarLine "" $script:ColorDim 5
+  $lines += New-OrbitbarLine "" $script:ColorDim 5
   $stamp = ""
   if ($null -ne $takenAt) { $stamp = $takenAt.ToString("HH:mm:ss") }
-  $lines += New-HotbarLine (Format-HotbarLine ("  muestra " + $stamp + " - refresco " + $script:UsageRefreshSeconds + "s")) $script:ColorDim 9
-  $lines += New-HotbarLine (Format-HotbarLine "  click de nuevo para cerrar") $script:ColorDim 9
+  $lines += New-OrbitbarLine (Format-OrbitbarLine ("  muestra " + $stamp + " - refresco " + $script:UsageRefreshSeconds + "s")) $script:ColorDim 9
+  $lines += New-OrbitbarLine (Format-OrbitbarLine "  click de nuevo para cerrar") $script:ColorDim 9
   return $lines
 }
 
 # Parks the refresh. Safe to call when no timer was ever built: the null check is
 # the difference between "no-op" and a null-reference crash on window close.
-function Stop-HotbarUsagePanelTimer {
+function Stop-OrbitbarUsagePanelTimer {
   if ($null -eq $script:UsageTimer) { return }
   try { $script:UsageTimer.Stop() } catch { }
 }
@@ -1296,37 +1297,37 @@ function Stop-HotbarUsagePanelTimer {
   ~0.5 s for all three), so the bar pauses for a fraction of the 5 s period
   instead of gaining a runspace and a dispatcher hop to avoid it.
 #>
-function Start-HotbarUsagePanelTimer {
+function Start-OrbitbarUsagePanelTimer {
   if ($null -eq $script:Window) { return }
 
   if ($null -eq $script:UsageTimer) {
     $script:UsageTimer = New-Object System.Windows.Threading.DispatcherTimer
     $script:UsageTimer.Interval = [TimeSpan]::FromSeconds($script:UsageRefreshSeconds)
-    $script:UsageTimer.Add_Tick({ Update-HotbarUsagePanel })
+    $script:UsageTimer.Add_Tick({ Update-OrbitbarUsagePanel })
   }
   $script:UsageTimer.Start()
 }
 
 # The refresh itself. The UsagePanelActive guard is the load-bearing line: a tick
-# that fires after the panel closed must not resurrect it, and Set-HotbarPanelLines
+# that fires after the panel closed must not resurrect it, and Set-OrbitbarPanelLines
 # is what closes it.
-function Update-HotbarUsagePanel {
+function Update-OrbitbarUsagePanel {
   [CmdletBinding()]
   param()
 
   if (-not $script:UsagePanelActive) {
-    Stop-HotbarUsagePanelTimer
+    Stop-OrbitbarUsagePanelTimer
     return
   }
 
   try {
     $snapshot = Get-AgentUsageSnapshot
     if (-not $script:UsagePanelActive) { return }
-    Set-HotbarPanelLines -Open $true -Panel "usage" -Lines (Get-HotbarUsageLines -Snapshot $snapshot)
+    Set-OrbitbarPanelLines -Open $true -Panel "usage" -Lines (Get-OrbitbarUsageLines -Snapshot $snapshot)
   } catch {
-    Set-HotbarPanelLines -Open $true -Panel "usage" -Lines @(
-      (New-HotbarLine "Uso de sesion" $script:ColorGold 11 $true),
-      (New-HotbarErrorLine $_.Exception.Message "  lectura fallida")
+    Set-OrbitbarPanelLines -Open $true -Panel "usage" -Lines @(
+      (New-OrbitbarLine "Uso de sesion" $script:ColorGold 11 $true),
+      (New-OrbitbarErrorLine $_.Exception.Message "  lectura fallida")
     )
   }
 }
@@ -1337,23 +1338,23 @@ function Update-HotbarUsagePanel {
 
 .NOTES
   Opens with a placeholder so the frame appears immediately, then fills it and
-  arms the refresh. Closing parks the timer through Set-HotbarPanelLines, which
+  arms the refresh. Closing parks the timer through Set-OrbitbarPanelLines, which
   every panel write goes through.
 #>
-function Toggle-HotbarUsagePanel {
+function Toggle-OrbitbarUsagePanel {
   if ($script:UsagePanelActive) {
-    Set-HotbarPanelLines -Lines @() -Open $false
+    Set-OrbitbarPanelLines -Lines @() -Open $false
     return
   }
 
-  Set-HotbarPanelLines -Open $true -Panel "usage" -Lines @(
-    (New-HotbarLine "Uso de sesion" $script:ColorGold 11 $true),
-    (New-HotbarLine "  reading..." $script:ColorDim 9)
+  Set-OrbitbarPanelLines -Open $true -Panel "usage" -Lines @(
+    (New-OrbitbarLine "Uso de sesion" $script:ColorGold 11 $true),
+    (New-OrbitbarLine "  reading..." $script:ColorDim 9)
   )
 
   $snapshot = Get-AgentUsageSnapshot
-  Set-HotbarPanelLines -Open $true -Panel "usage" -Lines (Get-HotbarUsageLines -Snapshot $snapshot)
-  Start-HotbarUsagePanelTimer
+  Set-OrbitbarPanelLines -Open $true -Panel "usage" -Lines (Get-OrbitbarUsageLines -Snapshot $snapshot)
+  Start-OrbitbarUsagePanelTimer
 }
 
 <#
@@ -1382,7 +1383,7 @@ function Toggle-HotbarUsagePanel {
   the numbers are what the store said at click time and stay until the next
   click. This is the same contract as the OmniRoute panel.
 #>
-function Get-HotbarAgentLines {
+function Get-OrbitbarAgentLines {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)][string]$Agent,
@@ -1402,8 +1403,8 @@ function Get-HotbarAgentLines {
 
   $lines = @()
   if ($null -eq $matched) {
-    $lines += New-HotbarLine ("  " + $Agent) $script:ColorGold 10 $true
-    $lines += New-HotbarErrorLine ("unknown agent: " + $Agent)
+    $lines += New-OrbitbarLine ("  " + $Agent) $script:ColorGold 10 $true
+    $lines += New-OrbitbarErrorLine ("unknown agent: " + $Agent)
     return $lines
   }
 
@@ -1411,69 +1412,69 @@ function Get-HotbarAgentLines {
   # panel: a trim from the right must never eat it.
   $approx = ""
   if ($matched.Approximate) { $approx = "~ " }
-  $lines += New-HotbarLine ("  " + $matched.Agent + $approx + $snapshot.MonthLabel) $script:ColorGold 10 $true
+  $lines += New-OrbitbarLine ("  " + $matched.Agent + $approx + $snapshot.MonthLabel) $script:ColorGold 10 $true
 
   if ($matched.MonthEntries -le 0) {
-    $lines += New-HotbarLine "  mes: sin datos" $script:ColorDim 9
+    $lines += New-OrbitbarLine "  mes: sin datos" $script:ColorDim 9
   } else {
-    $month = "  mes: out " + (Format-HotbarCompactCount $matched.MonthTokens)
+    $month = "  mes: out " + (Format-OrbitbarCompactCount $matched.MonthTokens)
     if ($null -ne $matched.MonthCost) {
-      $money = Format-HotbarMoney $matched.MonthCost
+      $money = Format-OrbitbarMoney $matched.MonthCost
       if ($matched.MonthEstimated) { $money = $money + " (est)" }
       $month = $month + "  " + $money
     } else {
       $month = $month + "  costo: sin datos"
     }
-    $lines += New-HotbarLine (Format-HotbarLine $month) $script:ColorText
+    $lines += New-OrbitbarLine (Format-OrbitbarLine $month) $script:ColorText
   }
 
   $anyEst = $false
   if ($matched.MonthEstimated) { $anyEst = $true }
   $topProjects = @($matched.Projects | Where-Object { $_.Entries -gt 0 } | Select-Object -First $script:AgentHistoryMaxProjectsShown)
   foreach ($project in $topProjects) {
-    $text = "  " + $project.Name + " " + (Format-HotbarCompactCount $project.Output)
-    $lines += New-HotbarLine (Format-HotbarLine $text) $script:ColorText
+    $text = "  " + $project.Name + " " + (Format-OrbitbarCompactCount $project.Output)
+    $lines += New-OrbitbarLine (Format-OrbitbarLine $text) $script:ColorText
 
     if ($null -ne $project.Cost) {
-      $money = Format-HotbarMoney $project.Cost
+      $money = Format-OrbitbarMoney $project.Cost
       if ($project.Estimated) { $money = $money + " (est)"; $anyEst = $true }
-      $lines += New-HotbarLine (Format-HotbarLine ("  " + $money)) $script:ColorUp 10 $true
+      $lines += New-OrbitbarLine (Format-OrbitbarLine ("  " + $money)) $script:ColorUp 10 $true
     } else {
-      $lines += New-HotbarLine "  costo: sin datos" $script:ColorDim 9
+      $lines += New-OrbitbarLine "  costo: sin datos" $script:ColorDim 9
     }
   }
 
   if ($anyEst) {
-    $lines += New-HotbarLine (Format-HotbarLine "  (est) = costo estimado") $script:ColorDim 9
+    $lines += New-OrbitbarLine (Format-OrbitbarLine "  (est) = costo estimado") $script:ColorDim 9
   }
-  $lines += New-HotbarLine (Format-HotbarLine "  click de nuevo para cerrar") $script:ColorDim 9
+  $lines += New-OrbitbarLine (Format-OrbitbarLine "  click de nuevo para cerrar") $script:ColorDim 9
   return $lines
 }
 
 # Toggles one agent history panel. "AgentPanelActive" is per agent panel (the
 # same shape as "UsagePanelActive"): a second click closes what the first opened,
 # while another panel (usage or omniroute) is replaced, exactly like usage does.
-function Toggle-HotbarAgentPanel {
+function Toggle-OrbitbarAgentPanel {
   [CmdletBinding()]
   param([Parameter(Mandatory = $true)][string]$Agent)
 
   if ($script:AgentPanelActive) {
-    Set-HotbarPanelLines -Lines @() -Open $false
+    Set-OrbitbarPanelLines -Lines @() -Open $false
     return
   }
 
-  Set-HotbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines @(
-    (New-HotbarLine ("  " + $Agent) $script:ColorGold 10 $true),
-    (New-HotbarLine "  reading..." $script:ColorDim 9)
+  Set-OrbitbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines @(
+    (New-OrbitbarLine ("  " + $Agent) $script:ColorGold 10 $true),
+    (New-OrbitbarLine "  reading..." $script:ColorDim 9)
   )
 
   try {
-    $lines = Get-HotbarAgentLines -Agent $Agent
-    Set-HotbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines $lines
+    $lines = Get-OrbitbarAgentLines -Agent $Agent
+    Set-OrbitbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines $lines
   } catch {
-    Set-HotbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines @(
-      (New-HotbarLine ("  " + $Agent) $script:ColorGold 10 $true),
-      (New-HotbarErrorLine $_.Exception.Message "  lectura fallida")
+    Set-OrbitbarPanelLines -Open $true -Panel ("agent:" + $Agent) -Lines @(
+      (New-OrbitbarLine ("  " + $Agent) $script:ColorGold 10 $true),
+      (New-OrbitbarErrorLine $_.Exception.Message "  lectura fallida")
     )
   }
 }
@@ -1481,7 +1482,7 @@ function Toggle-HotbarAgentPanel {
 # ---------------------------------------------------------------------------
 # Item actions
 # ---------------------------------------------------------------------------
-function Invoke-HotbarItemAction {
+function Invoke-OrbitbarItemAction {
   [CmdletBinding()]
   param($Item)
 
@@ -1492,37 +1493,37 @@ function Invoke-HotbarItemAction {
   try {
     switch -Regex ($action) {
       "^none$" { return }
-      "^omniroute-status$" { Toggle-HotbarPanel; return }
-      "^agent-usage:(claude|codex|opencode)$" { Toggle-HotbarAgentPanel -Agent $Matches[1]; return }
-      "^agent-usage$" { Toggle-HotbarUsagePanel; return }
-      "^edit-config$" { Open-HotbarConfig; return }
-      "^run:(.+)$" { Start-HotbarCommand -Command $Matches[1] -Item $Item; return }
+      "^omniroute-status$" { Toggle-OrbitbarPanel; return }
+      "^agent-usage:(claude|codex|opencode)$" { Toggle-OrbitbarAgentPanel -Agent $Matches[1]; return }
+      "^agent-usage$" { Toggle-OrbitbarUsagePanel; return }
+      "^edit-config$" { Open-OrbitbarConfig; return }
+      "^run:(.+)$" { Start-OrbitbarCommand -Command $Matches[1] -Item $Item; return }
       default {
         # Unknown action: say so in the panel instead of doing nothing silently.
         # A typo in config.json must be visible, not mysterious.
-        Set-HotbarPanelLines -Open $true -Lines @(
-          (New-HotbarLine "hotbar" $script:ColorGold 11 $true),
-          (New-HotbarErrorLine ("unknown action: " + $action))
+        Set-OrbitbarPanelLines -Open $true -Lines @(
+          (New-OrbitbarLine "orbitbar" $script:ColorGold 11 $true),
+          (New-OrbitbarErrorLine ("unknown action: " + $action))
         )
         return
       }
     }
   } catch {
-    Set-HotbarPanelLines -Open $true -Lines @(
-      (New-HotbarLine "hotbar" $script:ColorGold 11 $true),
-      (New-HotbarErrorLine $_.Exception.Message "  action failed")
+    Set-OrbitbarPanelLines -Open $true -Lines @(
+      (New-OrbitbarLine "orbitbar" $script:ColorGold 11 $true),
+      (New-OrbitbarErrorLine $_.Exception.Message "  action failed")
     )
   }
 }
 
-function Open-HotbarConfig {
+function Open-OrbitbarConfig {
   [CmdletBinding()]
   param()
 
   if (-not [System.IO.File]::Exists($script:ConfigPath)) {
-    Set-HotbarPanelLines -Open $true -Lines @(
-      (New-HotbarLine "hotbar" $script:ColorGold 11 $true),
-      (New-HotbarErrorLine ("config not found: " + $script:ConfigPath) "  cannot open")
+    Set-OrbitbarPanelLines -Open $true -Lines @(
+      (New-OrbitbarLine "orbitbar" $script:ColorGold 11 $true),
+      (New-OrbitbarErrorLine ("config not found: " + $script:ConfigPath) "  cannot open")
     )
     return
   }
@@ -1531,7 +1532,7 @@ function Open-HotbarConfig {
   Start-Process -FilePath "notepad.exe" -ArgumentList $script:ConfigPath
 }
 
-function Test-HotbarExecutableOnPath {
+function Test-OrbitbarExecutableOnPath {
   [CmdletBinding()]
   param([string]$FileName)
 
@@ -1566,7 +1567,7 @@ function Test-HotbarExecutableOnPath {
   application". /d skips AutoRun commands, which keeps the start fast and free of
   surprises.
 #>
-function Start-HotbarCommand {
+function Start-OrbitbarCommand {
   [CmdletBinding()]
   param(
     [string]$Command,
@@ -1595,7 +1596,7 @@ function Start-HotbarCommand {
   if ($extension) {
     $useShell = ($extension -match '^\.(cmd|bat|ps1|psm1|vbs|js|wsf)$')
   } else {
-    $useShell = -not (Test-HotbarExecutableOnPath ($executable + ".exe"))
+    $useShell = -not (Test-OrbitbarExecutableOnPath ($executable + ".exe"))
   }
 
   $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -1615,9 +1616,9 @@ function Start-HotbarCommand {
 
   $process = [System.Diagnostics.Process]::Start($startInfo)
   if ($null -eq $process) {
-    Set-HotbarPanelLines -Open $true -Lines @(
-      (New-HotbarLine "hotbar" $script:ColorGold 11 $true),
-      (New-HotbarErrorLine ("could not start: " + $commandText))
+    Set-OrbitbarPanelLines -Open $true -Lines @(
+      (New-OrbitbarLine "orbitbar" $script:ColorGold 11 $true),
+      (New-OrbitbarErrorLine ("could not start: " + $commandText))
     )
   }
 }
@@ -1640,7 +1641,7 @@ function Start-HotbarCommand {
   coverage: the geometry, the glyph raster and the panel width are all asserted
   from data, not from a human looking at it. Pass -SelfTestMs to see it longer.
 #>
-function Invoke-HotbarSelfTest {
+function Invoke-OrbitbarSelfTest {
   [CmdletBinding()]
   param([int]$DisplayMs = 400)
 
@@ -1650,7 +1651,7 @@ function Invoke-HotbarSelfTest {
   $window = $null
 
   try {
-    $config = Initialize-HotbarStateFromConfig
+    $config = Initialize-OrbitbarStateFromConfig
     $report += ("config=" + [System.IO.Path]::GetFileName($script:ConfigPath))
 
     $itemCount = 0
@@ -1665,20 +1666,20 @@ function Invoke-HotbarSelfTest {
         $action.StartsWith("run:") -or
         ($action -match "^agent-usage:(claude|codex|opencode)$")
       if (-not $known) { $failures += ("item " + [string]$item.id + " has an unsupported action: " + $action) }
-      $null = ConvertFrom-HotbarGlyph $item.glyph
+      $null = ConvertFrom-OrbitbarGlyph $item.glyph
     }
 
-    $window = New-HotbarWindow
-    $report += ("xaml=ok buttons=" + (Get-HotbarElement -Window $window -Name "ItemsPanel").Children.Count)
+    $window = New-OrbitbarWindow
+    $report += ("xaml=ok buttons=" + (Get-OrbitbarElement -Window $window -Name "ItemsPanel").Children.Count)
 
     $primary = [System.Windows.Forms.Screen]::PrimaryScreen
-    $active = Get-HotbarScreenFromConfig -Config $config
+    $active = Get-OrbitbarScreenFromConfig -Config $config
     if ($null -eq $active) { $failures += "screen resolution returned no monitor" }
     $report += ("monitor=" + $active.DeviceName)
 
-    $expanded = Get-HotbarGeometry -Collapsed $false -PanelOpen $false -Screen $primary
-    $collapsed = Get-HotbarGeometry -Collapsed $true -PanelOpen $false -Screen $primary
-    $withPanel = Get-HotbarGeometry -Collapsed $false -PanelOpen $true -Screen $primary
+    $expanded = Get-OrbitbarGeometry -Collapsed $false -PanelOpen $false -Screen $primary
+    $collapsed = Get-OrbitbarGeometry -Collapsed $true -PanelOpen $false -Screen $primary
+    $withPanel = Get-OrbitbarGeometry -Collapsed $false -PanelOpen $true -Screen $primary
     $working = $primary.WorkingArea
     $scale = $expanded.Scale
 
@@ -1702,8 +1703,8 @@ function Invoke-HotbarSelfTest {
     $report += ("geometry expanded=" + $expanded.X + "," + $expanded.Y + " collapsed=" + $collapsed.X + "," + $collapsed.Y + " panel=" + $withPanel.X + "," + $withPanel.Y)
     $report += ("screen=" + $expanded.WorkingArea + " dpi_scale=" + $scale)
 
-    $snapshot = Get-HotbarOmniRouteSnapshot -NetstatTimeoutMs 2000 -BusyTimeoutMs 600
-    $lines = Get-HotbarOmniRouteLines -Snapshot $snapshot
+    $snapshot = Get-OrbitbarOmniRouteSnapshot -NetstatTimeoutMs 2000 -BusyTimeoutMs 600
+    $lines = Get-OrbitbarOmniRouteLines -Snapshot $snapshot
     if ($lines.Count -lt 4) { $failures += "panel produced too few lines" }
     foreach ($line in $lines) {
       if ($line.Text.Length -gt $script:MaxPanelChars) {
@@ -1712,7 +1713,7 @@ function Invoke-HotbarSelfTest {
     }
     $report += ("data gateway=" + $(if ($snapshot.Gateway.Up) { "UP" } else { "DOWN" }) + " combos=" + @($snapshot.Combos.Combos).Count + " provider=" + $snapshot.Combos.Provider)
 
-    Set-HotbarPanelLines -Open $true -Lines $lines
+    Set-OrbitbarPanelLines -Open $true -Lines $lines
     $report += ("panel_lines=" + $lines.Count)
 
     # The usage panel, exercised for real and drawn for real. Each agent must be
@@ -1737,7 +1738,7 @@ function Invoke-HotbarSelfTest {
     $usageWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $usageSnapshot = Get-AgentUsageSnapshot -BusyTimeoutMs 600 -MaxBytes $usageBudget
     $usageWatch.Stop()
-    $usageLines = Get-HotbarUsageLines -Snapshot $usageSnapshot
+    $usageLines = Get-OrbitbarUsageLines -Snapshot $usageSnapshot
     foreach ($line in $usageLines) {
       if ($line.Text.Length -gt $script:MaxPanelChars) {
         $failures += ("usage line overflows the width: " + $line.Text.Length + " chars: " + $line.Text)
@@ -1751,7 +1752,7 @@ function Invoke-HotbarSelfTest {
     foreach ($usage in $usageSnapshot) {
       if ($usage.Ok -and $usage.Approximate) { $approxSeen = $true }
       if ($usage.Ok) {
-        $cost = if ($null -eq $usage.Cost) { "sin datos" } else { Format-HotbarMoney $usage.Cost }
+        $cost = if ($null -eq $usage.Cost) { "sin datos" } else { Format-OrbitbarMoney $usage.Cost }
         $usageReport += ($usage.Agent + "=OK " + $cost + $(if ($usage.Approximate) { " aprox" } else { "" }))
       } else {
         if (-not ([string]$usage.Error).Trim()) { $failures += ($usage.Agent + " failed without a reason") }
@@ -1772,7 +1773,7 @@ function Invoke-HotbarSelfTest {
     # within the panel width, and estimated money without its legend is a lie.
     $agentBudget = 256KB
     $agentWatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $agentLines = Get-HotbarAgentLines -Agent "claude" -MaxBytes $agentBudget
+    $agentLines = Get-OrbitbarAgentLines -Agent "claude" -MaxBytes $agentBudget
     $agentWatch.Stop()
     foreach ($line in $agentLines) {
       if ($line.Text.Length -gt $script:MaxPanelChars) {
@@ -1803,25 +1804,25 @@ function Invoke-HotbarSelfTest {
     # once, at the end, as the state the window actually shows.
     $timerProbe = @($usageLines[0], $usageLines[1])
 
-    Set-HotbarPanelLines -Open $true -Panel "usage" -Lines $timerProbe
-    Start-HotbarUsagePanelTimer
+    Set-OrbitbarPanelLines -Open $true -Panel "usage" -Lines $timerProbe
+    Start-OrbitbarUsagePanelTimer
     if (-not ($null -ne $script:UsageTimer -and $script:UsageTimer.IsEnabled)) {
       $failures += "usage refresh timer did not start"
     }
 
-    Set-HotbarPanelLines -Open $true -Panel "usage" -Lines $timerProbe
+    Set-OrbitbarPanelLines -Open $true -Panel "usage" -Lines $timerProbe
     if (-not ($null -ne $script:UsageTimer -and $script:UsageTimer.IsEnabled)) {
       $failures += "rewriting the usage panel stopped its own refresh"
     }
 
-    Set-HotbarPanelLines -Lines @() -Open $false
+    Set-OrbitbarPanelLines -Lines @() -Open $false
     if ($null -ne $script:UsageTimer -and $script:UsageTimer.IsEnabled) {
       $failures += "usage refresh survived the panel closing"
     }
 
     # Another live panel takes the bar over, so the usage refresh must park.
-    Start-HotbarUsagePanelTimer
-    Set-HotbarPanelLines -Open $true -Panel "omniroute" -Lines $timerProbe
+    Start-OrbitbarUsagePanelTimer
+    Set-OrbitbarPanelLines -Open $true -Panel "omniroute" -Lines $timerProbe
     if ($null -ne $script:UsageTimer -and $script:UsageTimer.IsEnabled) {
       $failures += "usage refresh survived a panel change"
     }
@@ -1829,11 +1830,11 @@ function Invoke-HotbarSelfTest {
 
     # Leave the bar showing the usage panel, with its refresh armed, exactly as a
     # click on the item would.
-    Set-HotbarPanelLines -Open $true -Panel "usage" -Lines $usageLines
-    Start-HotbarUsagePanelTimer
+    Set-OrbitbarPanelLines -Open $true -Panel "usage" -Lines $usageLines
+    Start-OrbitbarUsagePanelTimer
 
     # Show it for real, then close it on a timer.
-    Update-HotbarGeometry
+    Update-OrbitbarGeometry
     $timer = New-Object System.Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromMilliseconds($DisplayMs)
     $timer.Add_Tick({
@@ -1867,19 +1868,19 @@ function Invoke-HotbarSelfTest {
   }
 
   $watch.Stop()
-  foreach ($line in $report) { Write-Output ("HOTBAR_SELFTEST " + $line) }
-  Write-Output ("HOTBAR_SELFTEST elapsed_ms=" + $watch.ElapsedMilliseconds)
+  foreach ($line in $report) { Write-Output ("ORBITBAR_SELFTEST " + $line) }
+  Write-Output ("ORBITBAR_SELFTEST elapsed_ms=" + $watch.ElapsedMilliseconds)
 
   # The exit code travels in a script variable, never as a return value: the
   # report above is written to the output stream, and a PowerShell function
   # returns its whole output stream, so `exit (Invoke-...)` would try to cast
   # an array of strings to an int.
   if ($failures.Count -gt 0) {
-    foreach ($line in $failures) { Write-Output ("HOTBAR_SELFTEST check FAIL: " + $line) }
-    Write-Output "HOTBAR_SELFTEST FAIL"
+    foreach ($line in $failures) { Write-Output ("ORBITBAR_SELFTEST check FAIL: " + $line) }
+    Write-Output "ORBITBAR_SELFTEST FAIL"
     $script:SelfTestExitCode = 1
   } else {
-    Write-Output "HOTBAR_SELFTEST PASS"
+    Write-Output "ORBITBAR_SELFTEST PASS"
     $script:SelfTestExitCode = 0
   }
 }
@@ -1895,11 +1896,11 @@ if (-not [System.Windows.Application]::Current) {
 }
 
 if ($SelfTest) {
-  Invoke-HotbarSelfTest -DisplayMs $SelfTestMs
+  Invoke-OrbitbarSelfTest -DisplayMs $SelfTestMs
   exit $script:SelfTestExitCode
 }
 
-$mutex = New-Object System.Threading.Mutex($false, $script:HotbarMutexName)
+$mutex = New-Object System.Threading.Mutex($false, $script:OrbitbarMutexName)
 $owned = $false
 try {
   $owned = $mutex.WaitOne(0)
@@ -1909,18 +1910,18 @@ try {
 }
 
 if (-not $owned) {
-  Write-Output "HOTBAR_ALREADY_RUNNING"
+  Write-Output "ORBITBAR_ALREADY_RUNNING"
   exit 3
 }
 
 try {
-  $null = Initialize-HotbarStateFromConfig
-  $null = New-HotbarWindow
+  $null = Initialize-OrbitbarStateFromConfig
+  $null = New-OrbitbarWindow
   # ShowDialog returns [bool]; keep it off the output stream.
   $null = $script:Window.ShowDialog()
   exit 0
 } catch {
-  Write-Output ("HOTBAR_ERROR " + $_.Exception.Message)
+  Write-Output ("ORBITBAR_ERROR " + $_.Exception.Message)
   exit 1
 } finally {
   try { $mutex.ReleaseMutex() } catch { }

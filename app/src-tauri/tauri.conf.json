@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "hotbar",
+  "productName": "Orbitbar",
   "version": "0.1.0",
-  "identifier": "com.hotbar.app",
+  "identifier": "com.orbitbar.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "hotbar",
+        "title": "Orbitbar",
         "width": 72,
         "height": 400,
         "minWidth": 0,

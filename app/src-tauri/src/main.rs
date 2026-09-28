@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    hotbar_tauri_lib::run()
+    orbitbar_lib::run()
 }

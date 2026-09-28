@@ -3,10 +3,10 @@
   Read-only SQLite query with no console window and no runtime dependency.
 
 .DESCRIPTION
-  Copy of scripts/lib/Read-SqliteQuery.ps1 for the hotbar widget, so the bar reads
+  Copy of scripts/lib/Read-SqliteQuery.ps1 for the orbitbar widget, so the bar reads
   OmniRoute's own database without depending on the Herdr plugin's script tree. The
   logic is unchanged; only the docstring paths and the compiled type name differ
-  (Hotbar instead of HerdrOmniRoute, so a process that somehow loads both copies
+  (Orbitbar instead of HerdrOmniRoute, so a process that somehow loads both copies
   compiles two distinct types instead of colliding on one).
 
   Runs one SELECT and returns its rows as string arrays. Two providers, in
@@ -43,7 +43,7 @@
 
 # The C# type is compiled once per PowerShell process. Re-dot-sourcing the file
 # must not try to add it again, hence the guard.
-$script:ReadOnlySqliteTypeName = "Hotbar.ReadOnlySqlite"
+$script:ReadOnlySqliteTypeName = "Orbitbar.ReadOnlySqlite"
 
 $script:ReadOnlySqliteSource = @'
 using System;
@@ -51,7 +51,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace Hotbar
+namespace Orbitbar
 {
     // Minimal read-only binding over winsqlite3.dll. C# 5 syntax on purpose:
     // Windows PowerShell 5.1 compiles Add-Type with the CodeDom C# 5 compiler.
@@ -179,7 +179,7 @@ namespace Hotbar
 # Compiles the binding once per process. Returns $null on success, or the reason
 # it could not be compiled.
 function Initialize-WinSqlite {
-  if ($null -ne ("Hotbar.ReadOnlySqlite" -as [type])) { return $null }
+  if ($null -ne ("Orbitbar.ReadOnlySqlite" -as [type])) { return $null }
 
   try {
     Add-Type -TypeDefinition $script:ReadOnlySqliteSource -ErrorAction Stop | Out-Null
@@ -292,7 +292,7 @@ function Invoke-SqliteQuery {
   $error = $null
   $rows = $null
   try {
-    $rows = [Hotbar.ReadOnlySqlite]::Query($DatabasePath, $Sql, $BusyTimeoutMs, [ref]$error)
+    $rows = [Orbitbar.ReadOnlySqlite]::Query($DatabasePath, $Sql, $BusyTimeoutMs, [ref]$error)
   } catch {
     $rows = $null
     $error = $_.Exception.Message
