@@ -1,6 +1,6 @@
 # Feature: OmniRoute auto-fallback gateway — Herdr plugin + pi extension
 
-Status: **in progress** — T1–T3 done, T2.1 (status pane) done, T2.2 (rediseño a popup modal sin ventanas) done y T2.3 (snapshot al abrir, sin refresco) done, T4b probe ejecutado (2 bloqueos reales detectados).
+Status: **in progress** — T1–T3 done, T2.1 (status pane) done, T2.2 (rediseño a popup modal sin ventanas) done y T2.3 (snapshot al abrir, sin refresco) done, T4b probe ejecutado (2 bloqueos reales detectados; BLOQUEO 2/key resuelto, BLOQUEO 1/combo pendiente).
 
 ## Objective
 Hacer que OmniRoute sea el gateway de fallback automático de tokens para todo el stack de agentes (pi/gentle-shell, codex, claude) con garantía de que siempre corre mientras el usuario trabaja en Herdr, y con visibilidad/control desde Herdr y desde pi (aviso post-call cuando se usa un respaldo).
@@ -30,8 +30,8 @@ Hacer que OmniRoute sea el gateway de fallback automático de tokens para todo e
 - Migración OmniRoute a npm global / otra ruta de instalación.
 
 ## Constraintes
-- Windows 11, PowerShell 5.1, Node v22.22.3 (fnm persistente: C:\Users\patri\scoop\persist\fnm\node-versions\v22.22.3\installation\node.exe).
-- OmniRoute entry: C:\Users\patri\node_modules\omniroute\bin\omniroute.mjs (no está en PATH; rutas absolutas en scripts/task).
+- Windows 11, PowerShell 5.1, Node v22.22.3 (fnm persistente: %USERPROFILE%\scoop\persist\fnm\node-versions\v22.22.3\installation\node.exe).
+- OmniRoute entry: %USERPROFILE%\node_modules\omniroute\bin\omniroute.mjs (no está en PATH; rutas absolutas en scripts/task).
 - Pi 0.86.1: extensiones = archivos .ts en `~/.pi/agent/extensions/` con `export default function (pi: ExtensionAPI)`; API: `pi.registerCommand`, `pi.on`, `ctx.ui.notify`, `ctx.ui.setStatus`, `ctx.exec`.
 - Herdr 0.9.1-preview (server corriendo, socket en %APPDATA%\herdr\herdr.sock): plugins = dir con `herdr-plugin.toml`; env HERDR_BIN_PATH/HERDR_SOCKET_PATH/...; `herdr plugin link` para local, `herdr plugin install owner/repo/subdir` para GitHub.
 - No exponer credenciales; el `.env` de OmniRoute (STORAGE_ENCRYPTION_KEY) no se toca.
@@ -208,6 +208,8 @@ Hallazgos que quedan registrados:
 - [x] Probe routing (2026-09-25 21:0x): `simulate --explain` → árbol primary `moonshot/kimi-k3` (85%) → fallbacks `kimi-coding/k3` → `kimi-web/k3`, breakers CLOSED, quota 100%. Llamadas reales OK: `chat` default → `gemini-2.5-flash` (200, 19 tok); `chat --combo "Kimi Coding"` → `gemini-3.1-flash-lite-preview` (200, 131 tok, **70.8 s**).
 - [x] **BLOQUEO 1 (combo muerto)**: `providers list` no muestra conexiones `moonshot`, `kimi-coding` ni `kimi-web` — solo 10 conexiones, 3 `active` (g4f-gemini, gemini, uncloseai). Los 3 miembros del combo `Kimi Coding` apuntan a providers inexistentes → el router abandona el combo y resuelve `auto` escaneando el pool global (logs: ráfaga de 400/429 en g4f-gemini y felo-web, `auto/auto 499`, luego 503→200 en gemini). Acción: reconfigurar el combo con providers reales o borrarlo.
 - [x] **BLOQUEO 2 (sin API key de gateway)**: `GET/POST http://localhost:20128/api/v1/*` → `401 invalid_api_key` ("Authentication required"). `keys list` solo devuelve 2 keys de *provider* (g4f-gemini, gemini, masked `enc:v1***`). `openapi try` también 401; no hay flag `--no-auth` en `serve`. Headers CORS admiten `x-omniroute-connection`, `X-OmniRoute-Lease-Owner`, `X-OmniRoute-Lease-Generation` → sí hay señal de routing/fallback, pero requiere cliente autenticado. Vía soportada para crear la key: `omniroute config set <tool>` (escribe config del cliente: Claude Code, Codex CLI, OpenCode, …).
+- [x] **BLOQUEO 2 RESUELTO (2026-09-25) — key de gateway válida y verificada**. Diagnóstico: la key que el usuario copió al chat (`<redacted-corrupted-key>`) estaba **corrupta** (segmento interno de 6 chars partido en 4+2 → longitud 36 vs 35) y por eso daba 401. La fila registrada en `api_keys` (name `OMNIROUTE_API_KEY`, activa, `machine_id` presente, `scopes ["self:usage"]`, `allowed_combos ["combo/*"]`) es internamente consistente (`sha256(key) == key_hash` ✓). El endpoint `/api/keys/{id}/reveal` devuelve `403 {"error":"API key reveal is disabled"}` (revelado deshabilitado en este server). Fix: se copió el plaintext correcto desde `storage.sqlite.api_keys.key` al archivo `omni-route.env` **sin exponerlo en chat**, concediendo `(M)` temporal y restaurando ACL final solo `<machine>\<user>:(R)` (read-only). Verificación: `GET /api/v1/models` con `Authorization: Bearer` → **200, 652 modelos**. OJO: no repetir el valor de la key en reportes; el archivo queda fuera del repo.
+- [x] **Marcador de combo activo resuelto SIN API key** (complemento a T2.4): el gateway expone `activeCombo` por `GET /api/settings`, que autentica por token de máquina (loopback). Derivación correcta: HMAC-SHA256(**key=MachineGuid**, mensaje=`"omniroute-cli-auth-v1"`), hex lowercase, header `x-omniroute-cli-token` — el orden key/mensaje al revés (el de mi primer intento) daba 401; verificado en PS 5.1: token coincide con la CLI (`5efa7b3657d4…`) y `/api/settings` → 200. El popup puede leerlo HTTP sin desplegar la CLI (0 hijos node) y sin API key. Pendiente: implementarlo en `status-dashboard.ps1` (o marcarlo como decisión de diseño si se prefiere seguir leyendo SQLite).
 - [ ] Registrar en pi un custom provider `omniroute` apuntando a http://localhost:20128 (bloqueado por BLOQUEO 2: hace falta key de gateway; la vía soportada es `omniroute config set`, no editar models.json a mano).
 - [ ] Verificar si OmniRoute añade headers `x-omniroute-*` de fallback en respuestas OK (no solo ≥400) — pendiente de cliente autenticado.
 - [ ] Ajustar perfil/agente en gentle-pi si se decide fijar modelo crítico sin fallback (decisión pendiente del usuario).
@@ -226,7 +228,7 @@ Hallazgos que quedan registrados:
 
 ## Verification commands
 - `netstat -an | findstr :20128` → LISTENING
-- `node C:\Users\patri\node_modules\omniroute\bin\omniroute.mjs status --base-url http://localhost:20128` → OK
+- `node %USERPROFILE%\node_modules\omniroute\bin\omniroute.mjs status --base-url http://localhost:20128` → OK
 - `herdr plugin action invoke herdr.omniroute.status` → salida de estado
 - pi: `/omniroute status` (en sesión pi) → estado ●/○
 
@@ -297,8 +299,10 @@ Hallazgos que quedan registrados:
   `enabled|disabled`). Cuando no hay `activeCombo` en la DB, no se pinta ni `●` ni `○`
   y se añade una línea explicativa, para no dar una respuesta que no tenemos.
 
+- 2026-09-25 (T4b/key) — **API key corregida y verificada**. Diagnóstico completo de auth del gateway (fuente instalada): (1) rutas de gestión `/api/settings` y `/api/combos` autentican por `x-omniroute-cli-token` = hex HMAC-SHA256(**key**=`machineIdSync(true)` = MachineGuid, **mensaje**=salt `"omniroute-cli-auth-v1"`, override vía `OMNIROUTE_CLI_SALT` no seteado); `combo list` del CLI las llama sin apiKey. (2) `/api/v1/*` valida Bearer contra la tabla `api_keys` (hash sha256); el comando CLI `keys` gestiona solo credenciales de providers (`key_value`), NO server keys; existe también `api-keys post-api-keys` (POST `/api/keys`). (3) La key del usuario estaba mal copiada en el archivo: la fila `api_keys` (35 chars) no coincide con el valor del archivo (36 chars, segmento interno partido), pese a compartir prefijo y últimos 4 chars. Solución aplicada: plaintext correcto leído de SQLite → escrito en `omni-route.env` (ACL `(R)` restaurado; never en chat) → **`/api/v1/models` 200 (652 modelos)**. El 401/403 anterior (Bearer/x-api-key/cli-token mal derivado) queda explicado y documentado. Cliente pi a `http://localhost:20128` puede ahora autenticarse (T4b/registrar provider custom queda como paso siguiente).
+
 ## Next step
 1. Usuario: abrir el popup con `prefix+o` / la acción `open-status-pane`. Solo `q` o Enter lo cierran; Escape y el resto de teclas ya no lo cierran (a propósito, es modal de sesión). No hay pestaña que revisar: el status es un popup bajo demanda.
-2. Decidir T4b: (a) `omniroute config set opencode|claude|codex` para crear la key de gateway y apuntar los clientes al gateway (escribe configs existentes del usuario), o (b) arreglar primero el combo `Kimi Coding` con providers reales.
+2. Decidir T4b: (a) registrar en pi el provider custom `omniroute` → `http://localhost:20128` usando la key ya válida (ya NO está bloqueado por BLOQUEO 2), y (b) arreglar primero el combo `Kimi Coding` con providers reales (BLOQUEO 1 sigue abierto). El marcador `●`/`○` del popup puede activarse vía `GET /api/settings` con `x-omniroute-cli-token` (derivación documentada en T4b/key) o mantenerse en lectura SQLite; decidir antes de tocar `status-dashboard.ps1`.
 3. Futuro: plugin general de output total entre proyectos siguiendo `docs/status-panes.md`, ya sobre el patrón de popup acotado.
 4. Si el objetivo de 300 ms importa de verdad, la decisión no es "optimizar el script": es cambiar de host (binario nativo o worker residente) y eso se decide aparte.

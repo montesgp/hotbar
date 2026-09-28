@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+hotbar/config.json
+*.local.json
+.atl/

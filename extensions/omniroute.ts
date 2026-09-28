@@ -6,10 +6,36 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent"
 import net from "node:net"
 import { spawn } from "node:child_process"
+import { readFileSync, existsSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
+
+// This file resolves its own location instead of relying on process.cwd(),
+// because it runs as an extension loaded by a host (pi/gentle-pi) that may
+// start from any working directory. The repo root is this file's parent
+// directory's parent (extensions/../).
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
+
+// Minimal KEY=VALUE .env loader: no external dependency, comments (#) and
+// blank lines ignored, never overrides a variable already set in the
+// environment.
+function loadDotEnv(path: string) {
+  if (!existsSync(path)) return
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const eq = trimmed.indexOf("=")
+    if (eq === -1) continue
+    const key = trimmed.slice(0, eq).trim()
+    const value = trimmed.slice(eq + 1).trim()
+    if (key && !(key in process.env)) process.env[key] = value
+  }
+}
+loadDotEnv(join(REPO_ROOT, ".env"))
 
 const PORT = 20128
-const NODE = "C:\\Users\\patri\\scoop\\persist\\fnm\\node-versions\\v22.22.3\\installation\\node.exe"
-const ENTRY = "C:\\Users\\patri\\node_modules\\omniroute\\bin\\omniroute.mjs"
+const NODE = process.env.OMNIROUTE_NODE || "node"
+const ENTRY = process.env.OMNIROUTE_ENTRY || "omniroute/bin/omniroute.mjs"
 
 function checkPort(port: number, timeoutMs = 1500): Promise<boolean> {
   return new Promise((resolve) => {

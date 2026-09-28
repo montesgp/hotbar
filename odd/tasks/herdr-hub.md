@@ -116,7 +116,7 @@ Evolucionar el plugin `herdr-omniroute` a un **hub general de Herdr**: un dock d
 - Cambios en Herdr mismo.
 
 ## Constraintes
-- Windows 11, PowerShell 5.1; herdr CLI: `C:\Users\patri\.herdr\packages\standalone\releases\0.9.1-preview.2026-09-21-0ff0f27e2226-x86_64-pc-windows-msvc\herdr.exe`.
+- Windows 11, PowerShell 5.1; herdr CLI: `%USERPROFILE%\.herdr\packages\standalone\releases\0.9.1-preview.2026-09-21-0ff0f27e2226-x86_64-pc-windows-msvc\herdr.exe`.
 - Panel hub: render in-place (`Home` + `ESC[K` por línea + `ESC[J`), sin ventanas (Invoke-Native), topes acotados, contrato de teclas propio del hub (no "cualquier tecla").
 - Hot path: evitar Test-Path/Join-Path/Get-Command; token de máquina derivado en PS 5.1 (verificado) para /api/settings.
 - No exponer credenciales; no repetir la key del gateway en texto.

@@ -390,7 +390,17 @@ function Read-HotbarConfig {
   [CmdletBinding()]
   param([string]$Path = $script:ConfigPath)
 
-  if (-not [System.IO.File]::Exists($Path)) { throw ("config not found: " + $Path) }
+  if (-not [System.IO.File]::Exists($Path)) {
+    # config.json is gitignored (it holds the local monitor pick); a fresh
+    # checkout only has the example. Seed the local file from it so the
+    # first launch works without any manual setup.
+    $examplePath = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($Path), "config.example.json")
+    if ([System.IO.File]::Exists($examplePath)) {
+      [System.IO.File]::Copy($examplePath, $Path)
+    } else {
+      throw ("config not found: " + $Path)
+    }
+  }
   $raw = [System.IO.File]::ReadAllText($Path)
   $config = $raw | ConvertFrom-Json
   if ($null -eq $config) { throw ("config is not valid JSON: " + $Path) }
