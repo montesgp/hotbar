@@ -71,8 +71,10 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       `migrate_legacy_config` copies (never moves) the old config. Route: delegated writer.
       Evidence: RED (`migrate_legacy_config` not found) → GREEN; `cargo test` 16/16 (parent
       re-ran: 16/16); `cargo build` OK; `tsc --noEmit` clean; PS parse 0 errors (8 files);
-      `orbitbar.ps1 -SelfTest` PASS. Only `com.hotbar.app` remains, in migration code.
-      O2+O3 independent verifier: PASS, no defects. RDD: 4th candidate (base `origin/main`)
+      `orbitbar.ps1 -SelfTest` PASS. Outside docs (`docs/`, `README.md`, `app/README.md`,
+      left for O6 on purpose) only `com.hotbar.app` remains, in migration code.
+      O4 independent verifier: code PASS; flagged `app/README.md` still says hotbar and
+      `--hb-*` → carried into O6. O2+O3 independent verifier: PASS, no defects. RDD: 4th candidate (base `origin/main`)
       declined. **Side effects:** the writer stopped two running `hotbar-tauri.exe`
       processes to unlock the folder; a stale `HKCU\...\Run\Hotbar` entry points to the old
       `hotbar-tauri\...\release\hotbar-tauri.exe`.
@@ -81,6 +83,15 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       `agent-usage` panel. Parity with the legacy widget numbers on the author's machine.
 - [ ] **O6 — Docs and architecture rewrite** for the product: core + readers + extensions,
       quick start per OS, how to add a custom metric.
+- [ ] **O8 — Remove everything old** (user, 2026-09-28: "todo lo que sea viejo lo borramos...
+      debe quedar lo más clean posible el repo").
+      - [x] Stale `HKCU\...\Run\Hotbar` autostart entry removed (pointed to a deleted exe).
+      - [x] Finished-feature trackers `odd/tasks/{herdr-hub,hotbar-widget,omniroute-autofallback}.md`
+            and the Herdr-only `docs/status-panes.md` deleted (kept in git history and Engram).
+      - [ ] After O5b reaches parity on the author's machine: delete `legacy/windows-widget/`,
+            `extensions/omniroute/legacy-widget/`, and `%APPDATA%\com.hotbar.app` (only after
+            the new app has migrated the config).
+      - [ ] O6 rewrites `README.md`, `docs/architecture.md`, `docs/hotbar.md`, `app/README.md`.
 - [ ] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar` (after the folder
       rename; verify the supported mechanism first).
 
