@@ -36,11 +36,19 @@ fn save_config(app: tauri::AppHandle, cfg: config::AppConfig) -> Result<(), Stri
 /// service or program involved. Runs off the main thread: the readers stream
 /// multi-megabyte jsonl files and query a SQLite database, which would
 /// otherwise stall the window.
+///
+/// `pricing.json` next to `config.json` is (re)loaded on every call, not
+/// cached, so editing it takes effect on the next refresh without an app
+/// restart - the file is small and this runs off the main thread anyway.
 #[tauri::command]
-async fn get_usage(window: usage::TimeWindow) -> Result<usage::UsageSnapshot, String> {
+async fn get_usage(app: tauri::AppHandle, window: usage::TimeWindow) -> Result<usage::UsageSnapshot, String> {
+    let pricing_path = config::config_dir(&app)?.join("pricing.json");
     tauri::async_runtime::spawn_blocking(move || {
         let paths = usage::resolve_paths(None).ok_or_else(|| "cannot resolve home directory".to_string())?;
-        Ok(usage::collect_usage(window, &paths, chrono::Local::now()))
+        let (overrides, pricing_warning) = usage::pricing::load_overrides(&pricing_path);
+        let mut snapshot = usage::collect_usage(window, &paths, chrono::Local::now(), &overrides);
+        snapshot.pricing_warning = pricing_warning;
+        Ok(snapshot)
     })
     .await
     .map_err(|e| format!("usage task panicked: {e}"))?
@@ -87,27 +95,48 @@ fn position_right_center(
     window.set_position(PhysicalPosition::new(x, y))
 }
 
-/// The config is the source of truth for autostart, so reconcile the OS entry
-/// against it on every launch instead of only ever writing it once. Three cases
-/// matter and only two need a write:
-///   - fresh install, autoStart defaults to true, no entry exists  -> enable
-///   - the user turned autostart off in their OS settings          -> enable again
-///   - the user turned it off here, entry still registered        -> disable
+#[derive(Debug, PartialEq, Eq)]
+enum AutostartAction {
+    Enable,
+    Disable,
+    Nothing,
+}
+
+/// Decides what to do with the OS autostart entry. The config is the source of
+/// truth, reconciled on every launch:
+///   - a debug build never touches the entry: it runs from target/debug and
+///     needs the dev server, so registering it would open a blank window at
+///     the next login;
+///   - wanted -> always enable, even when an entry exists, because the entry
+///     stores an executable path and rewriting it heals one left behind by an
+///     older or moved build (the entry name alone cannot tell them apart);
+///   - unwanted -> disable only when an entry is actually there.
 ///
+/// `registered` is `None` when the entry could not be read.
+fn autostart_action(debug_build: bool, wanted: bool, registered: Option<bool>) -> AutostartAction {
+    if debug_build {
+        return AutostartAction::Nothing;
+    }
+    match (wanted, registered) {
+        (true, _) => AutostartAction::Enable,
+        (false, Some(true)) => AutostartAction::Disable,
+        (false, _) => AutostartAction::Nothing,
+    }
+}
+
 /// Failing to register is never fatal. An orbitbar that refuses to launch
 /// because a Run key could not be written is strictly worse than one that
 /// launches without autostart, so this logs and lets startup continue.
 fn sync_autostart(app: &tauri::AppHandle, cfg: &config::AppConfig) {
     let manager = app.autolaunch();
-    let outcome = match manager.is_enabled() {
-        Ok(true) if !cfg.auto_start => manager.disable(),
-        Ok(false) if cfg.auto_start => manager.enable(),
-        Ok(_) => Ok(()),
-        Err(e) => Err(e),
+    let registered = manager.is_enabled().ok();
+    let outcome = match autostart_action(cfg!(debug_assertions), cfg.auto_start, registered) {
+        AutostartAction::Enable => manager.enable(),
+        AutostartAction::Disable => manager.disable(),
+        AutostartAction::Nothing => Ok(()),
     };
-    match outcome {
-        Ok(()) => {}
-        Err(e) => eprintln!("autostart could not be reconciled with config: {e}"),
+    if let Err(e) = outcome {
+        eprintln!("autostart could not be reconciled with config: {e}");
     }
 }
 
@@ -147,6 +176,41 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![get_config, save_config, get_usage])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod autostart_tests {
+    use super::{autostart_action, AutostartAction};
+
+    /// A dev build runs from target/debug and needs the Vite dev server. If it
+    /// registered itself, the next login would open a blank window.
+    #[test]
+    fn a_debug_build_never_touches_the_os_entry() {
+        assert_eq!(autostart_action(true, true, Some(false)), AutostartAction::Nothing);
+        assert_eq!(autostart_action(true, false, Some(true)), AutostartAction::Nothing);
+    }
+
+    /// The OS entry stores an executable path. Re-enabling on every launch
+    /// rewrites it to the binary that is actually running, so an entry left
+    /// behind by an older or moved build heals itself.
+    #[test]
+    fn a_wanted_entry_is_rewritten_even_when_one_exists() {
+        assert_eq!(autostart_action(false, true, Some(true)), AutostartAction::Enable);
+        assert_eq!(autostart_action(false, true, Some(false)), AutostartAction::Enable);
+    }
+
+    /// Not being able to read the entry is no reason to skip registering it.
+    #[test]
+    fn an_unreadable_entry_is_still_enabled_when_wanted() {
+        assert_eq!(autostart_action(false, true, None), AutostartAction::Enable);
+    }
+
+    #[test]
+    fn an_unwanted_entry_is_removed_only_when_present() {
+        assert_eq!(autostart_action(false, false, Some(true)), AutostartAction::Disable);
+        assert_eq!(autostart_action(false, false, Some(false)), AutostartAction::Nothing);
+        assert_eq!(autostart_action(false, false, None), AutostartAction::Nothing);
+    }
 }
 
 #[cfg(test)]

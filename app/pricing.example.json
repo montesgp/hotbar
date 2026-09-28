@@ -1,0 +1,26 @@
+{
+  "_readme": [
+    "Copy this file to pricing.json next to config.json in the app's config dir",
+    "(see app/src-tauri/src/config.rs for the exact path per OS) to add or",
+    "override model prices. get_usage reloads pricing.json on every call, so",
+    "edits apply on the next refresh without restarting the app.",
+    "",
+    "Key under 'models' = a model id, or a prefix of one (e.g. 'claude-opus-5-5'",
+    "also matches 'claude-opus-5-5-20260926'). An entry here wins over a",
+    "built-in row with the exact same key; a longer key always wins over a",
+    "shorter one, built-in or override. Amounts are USD per 1M tokens.",
+    "",
+    "cacheRead / cacheWrite5m / cacheWrite1h are optional. When omitted they",
+    "default to 0.1x, 1.25x and 2x that entry's own input price - Anthropic's",
+    "published cache multipliers."
+  ],
+  "models": {
+    "my-local-model": {
+      "input": 0.5,
+      "output": 1.5,
+      "cacheRead": 0.05,
+      "cacheWrite5m": 0.625,
+      "cacheWrite1h": 1.0
+    }
+  }
+}

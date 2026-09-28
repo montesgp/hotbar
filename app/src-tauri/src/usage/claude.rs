@@ -18,7 +18,7 @@
 
 use crate::usage::{
     find_jsonl_files, normalize_project_path, pricing, project_display_name, AgentUsageReport,
-    ProjectUsage, UsageTotals,
+    CostBasis, ProjectUsage, UsageTotals,
 };
 use chrono::{DateTime, Local};
 use serde_json::Value;
@@ -31,16 +31,27 @@ const AGENT: &str = "claude";
 struct Bucket {
     totals: UsageTotals,
     model: String,
+    /// Cache-write tokens split by TTL bucket, tracked separately from
+    /// `totals.cache_write_tokens` (their sum, used for display) because
+    /// Anthropic prices a 5-minute cache write differently from a 1-hour one.
+    cache_write_5m: u64,
+    cache_write_1h: u64,
 }
 
 impl Bucket {
     fn new() -> Self {
-        Self { totals: UsageTotals::default(), model: String::new() }
+        Self { totals: UsageTotals::default(), model: String::new(), cache_write_5m: 0, cache_write_1h: 0 }
     }
 }
 
-/// Reads month/window usage from every claude session file under `root`.
-pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>) -> AgentUsageReport {
+/// Reads month/window usage from every claude session file under `root`,
+/// pricing against `overrides` layered on top of the built-in table.
+pub fn read_usage(
+    root: &Path,
+    start: DateTime<Local>,
+    end: DateTime<Local>,
+    overrides: &pricing::PriceOverrides,
+) -> AgentUsageReport {
     if !root.exists() {
         return AgentUsageReport::not_installed(AGENT, format!("missing directory: {}", root.display()));
     }
@@ -112,17 +123,17 @@ pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>) -> 
             let input = get_u64(usage, "input_tokens");
             let output = get_u64(usage, "output_tokens");
             let cache_read = get_u64(usage, "cache_read_input_tokens");
-            let cache_write = get_u64(usage, "cache_creation_input_tokens");
+            let (cache_write_5m, cache_write_1h) = extract_cache_write(usage);
             let reasoning = usage
                 .get("output_tokens_details")
                 .map(|d| get_u64(d, "thinking_tokens"))
                 .unwrap_or(0);
 
-            add_entry(&mut month, input, output, cache_read, cache_write, reasoning, model);
+            add_entry(&mut month, input, output, cache_read, cache_write_5m, cache_write_1h, reasoning, model);
 
             if !cwd.is_empty() {
                 let bucket = projects.entry(cwd).or_insert_with(Bucket::new);
-                add_entry(bucket, input, output, cache_read, cache_write, reasoning, model);
+                add_entry(bucket, input, output, cache_read, cache_write_5m, cache_write_1h, reasoning, model);
             }
         }
     }
@@ -138,9 +149,12 @@ pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>) -> 
             month_totals.input_tokens,
             month_totals.output_tokens,
             month_totals.cache_read_tokens,
-            month_totals.cache_write_tokens,
+            month.cache_write_5m,
+            month.cache_write_1h,
+            overrides,
         );
         month_totals.cost = est.amount;
+        month_totals.cost_basis = est.amount.map(|_| CostBasis::ApiEquivalent);
     }
 
     let mut projects_out = Vec::with_capacity(projects.len());
@@ -151,9 +165,12 @@ pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>) -> 
             totals.input_tokens,
             totals.output_tokens,
             totals.cache_read_tokens,
-            totals.cache_write_tokens,
+            bucket.cache_write_5m,
+            bucket.cache_write_1h,
+            overrides,
         );
         totals.cost = est.amount;
+        totals.cost_basis = est.amount.map(|_| CostBasis::ApiEquivalent);
         projects_out.push(ProjectUsage {
             name: project_display_name(&key),
             path: key,
@@ -166,12 +183,14 @@ pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>) -> 
     AgentUsageReport::ok(AGENT, month_totals, projects_out, detail)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_entry(
     bucket: &mut Bucket,
     input: u64,
     output: u64,
     cache_read: u64,
-    cache_write: u64,
+    cache_write_5m: u64,
+    cache_write_1h: u64,
     reasoning: u64,
     model: Option<&str>,
 ) {
@@ -179,7 +198,9 @@ fn add_entry(
     bucket.totals.input_tokens += input;
     bucket.totals.output_tokens += output;
     bucket.totals.cache_read_tokens += cache_read;
-    bucket.totals.cache_write_tokens += cache_write;
+    bucket.totals.cache_write_tokens += cache_write_5m + cache_write_1h;
+    bucket.cache_write_5m += cache_write_5m;
+    bucket.cache_write_1h += cache_write_1h;
     bucket.totals.reasoning_tokens += reasoning;
     if let Some(model) = model {
         bucket.model = model.to_string();
@@ -188,6 +209,20 @@ fn add_entry(
 
 fn get_u64(node: &Value, name: &str) -> u64 {
     node.get(name).and_then(Value::as_u64).unwrap_or(0)
+}
+
+/// Splits `usage`'s cache-write tokens into (5-minute TTL, 1-hour TTL)
+/// buckets. Recent claude records carry `cache_creation.ephemeral_5m_input_tokens`
+/// / `ephemeral_1h_input_tokens`; older records only have the flat
+/// `cache_creation_input_tokens`, which this treats as a 5-minute write since
+/// that was the only TTL that existed before the split field shipped.
+fn extract_cache_write(usage: &Value) -> (u64, u64) {
+    if let Some(cache_creation) = usage.get("cache_creation") {
+        let five_m = get_u64(cache_creation, "ephemeral_5m_input_tokens");
+        let one_h = get_u64(cache_creation, "ephemeral_1h_input_tokens");
+        return (five_m, one_h);
+    }
+    (get_u64(usage, "cache_creation_input_tokens"), 0)
 }
 
 #[cfg(test)]
@@ -215,7 +250,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let missing = dir.path().join("nope");
         let (start, end) = window();
-        let report = read_usage(&missing, start, end);
+        let report = read_usage(&missing, start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.status, crate::usage::AgentStatus::NotInstalled);
     }
 
@@ -232,7 +267,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.status, crate::usage::AgentStatus::Ok);
         assert_eq!(report.totals.entries, 1, "the duplicate copy must not be counted twice");
         assert_eq!(report.totals.output_tokens, 50);
@@ -259,7 +294,7 @@ mod tests {
         );
         fs::write(project.join("session.jsonl"), content).unwrap();
 
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.totals.entries, 1);
         assert_eq!(report.totals.output_tokens, 50);
     }
@@ -276,7 +311,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.status, crate::usage::AgentStatus::Ok);
         assert_eq!(report.totals.entries, 1);
     }
@@ -294,7 +329,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.projects.len(), 2);
         assert_eq!(report.projects[0].name, "big");
         assert_eq!(report.projects[1].name, "small");
@@ -309,7 +344,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.totals.cost, None, "a model without a price row must never invent a cost");
     }
 
@@ -317,9 +352,40 @@ mod tests {
     fn empty_directory_with_no_session_files_is_ok_with_empty_totals() {
         let dir = tempdir().unwrap();
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end);
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
         assert_eq!(report.status, crate::usage::AgentStatus::Ok);
         assert_eq!(report.totals.entries, 0);
         assert!(report.projects.is_empty());
+    }
+
+    #[test]
+    fn a_priced_model_carries_the_api_equivalent_cost_basis() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        let content = line("req1", "2026-09-15T10:00:00Z", "C:/repos/orbitbar", 100, 50) + "\n";
+        fs::write(project.join("session.jsonl"), content).unwrap();
+
+        let (start, end) = window();
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        assert!(report.totals.cost.is_some());
+        assert_eq!(report.totals.cost_basis, Some(crate::usage::CostBasis::ApiEquivalent));
+    }
+
+    /// A record carrying the TTL-split `cache_creation` object must price its
+    /// 1-hour tokens at the 1-hour rate, not fold them into the flat
+    /// `cache_creation_input_tokens` 5-minute fallback.
+    #[test]
+    fn ephemeral_1h_cache_write_is_priced_separately_from_5m() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        let content = r#"{"requestId":"req1","timestamp":"2026-09-15T10:00:00Z","cwd":"C:/repos/orbitbar","message":{"id":"msg_req1","model":"claude-opus-5","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":1000000}}}}"#.to_string() + "\n";
+        fs::write(project.join("session.jsonl"), content).unwrap();
+
+        let (start, end) = window();
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        // claude-opus-5 cache_write_1h = 10.0 per 1M, not 6.25 (the 5m rate).
+        assert_eq!(report.totals.cost, Some(10.0));
     }
 }

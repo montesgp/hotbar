@@ -30,6 +30,15 @@ export type AgentStatus =
   | { state: "notInstalled" }
   | { state: "error"; detail: string };
 
+/**
+ * Whether `cost` is money the provider actually reported (opencode's own
+ * `session.cost`) or an estimate computed from official list prices times
+ * real token counts (claude, codex). Codex usage read through a ChatGPT
+ * subscription is not billed per token at all — `apiEquivalent` must never
+ * be rendered as if it were a bill the user received.
+ */
+export type CostBasis = "apiEquivalent" | "reported";
+
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
@@ -37,6 +46,7 @@ export interface UsageTotals {
   cacheWriteTokens: number;
   reasoningTokens: number;
   cost: number | null;
+  costBasis: CostBasis | null;
   entries: number;
 }
 
@@ -61,6 +71,8 @@ export interface UsageSnapshot {
   windowEnd: string;
   generatedAt: string;
   agents: AgentUsageReport[];
+  /** Set when `pricing.json` exists but failed to parse; built-ins were used anyway. */
+  pricingWarning: string | null;
 }
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
@@ -92,9 +104,16 @@ export function formatCompactNumber(value: number): string {
  * Cost in USD, two decimals. `null` means the store or the price table had no
  * data for that model — the panel must say so, never show 0 or invent a
  * number (see `UsageTotals.cost` in usage/mod.rs).
+ *
+ * `costBasis` controls the prefix: `"apiEquivalent"` (claude, codex) is an
+ * estimate computed from official list prices, never a bill the user
+ * actually received, so it renders as "≈ $12.34 API" rather than a plain
+ * dollar figure that would look like a reported charge. `"reported"`
+ * (opencode's own `session.cost`) renders as a plain "$1.23".
  */
-export function formatCost(cost: number | null): string {
+export function formatCost(cost: number | null, costBasis: CostBasis | null): string {
   if (cost === null) return "no price data";
+  if (costBasis === "apiEquivalent") return `≈ $${cost.toFixed(2)} API`;
   return `$${cost.toFixed(2)}`;
 }
 
@@ -160,14 +179,14 @@ export function buildAgentSection(report: AgentUsageReport): AgentSectionViewMod
               ? formatCompactNumber(report.totals.reasoningTokens)
               : null,
           entries: formatCompactNumber(report.totals.entries),
-          cost: formatCost(report.totals.cost),
+          cost: formatCost(report.totals.cost, report.totals.costBasis),
         }
       : null,
     topProjects: isOk
       ? report.projects.slice(0, MAX_PROJECTS_SHOWN).map((p) => ({
           name: p.name,
           output: formatCompactNumber(p.totals.outputTokens),
-          cost: formatCost(p.totals.cost),
+          cost: formatCost(p.totals.cost, p.totals.costBasis),
         }))
       : [],
   };
