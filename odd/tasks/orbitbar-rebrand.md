@@ -130,6 +130,10 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   corrupted (not the valid key), but rewriting history is a separate, destructive decision
   left to the user.
 
+- Chain strategy (user, 2026-09-28): every PR targets `dev`; promote `dev` → `main` at the
+  end. Slice 1 = PR #1 `feat/orbitbar` → `dev` (autostart, O1–O4, O5a, O5b; `a80178a`..
+  `8e7359b`). `dev` fast-forwarded to local `main` (`64d5e52`) before the PR.
+
 ## Progress
 
 - 2026-09-28: mapping done (delegated explorer). Branch created. Doc created.
