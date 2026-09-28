@@ -78,7 +78,22 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       declined. **Side effects:** the writer stopped two running `hotbar-tauri.exe`
       processes to unlock the folder; a stale `HKCU\...\Run\Hotbar` entry points to the old
       `hotbar-tauri\...\release\hotbar-tauri.exe`.
-- [ ] **O5 — Usage readers in Rust** (claude jsonl, codex jsonl, opencode sqlite, pricing
+- [x] **O5a — Rust readers + `get_usage(window)` command** (`app/src-tauri/src/usage/`:
+      claude, codex, opencode via bundled rusqlite, pricing; `TimeWindow` today | last7Days |
+      last30Days | thisMonth; per-agent status ok | notInstalled | error). Route: delegated
+      writer. Evidence: RED → GREEN, `cargo test` 49/49 (+1 ignored real-data parity test;
+      parent re-ran 49/49), clippy clean, build OK. Real-data scan ~2.7 s warm (release).
+      Parity on the author's machine (thisMonth): opencode identical (43 entries, 1,963,623
+      output). claude/codex differ ON PURPOSE: the legacy reader stops at an 8 MB read budget
+      per agent and flags `Approximate`, so it undercounted (claude 474 vs 18,482 entries;
+      codex 6 vs 78). Rust reads the full window. Also fixed: legacy per-project buckets
+      ignored the window. **Gap:** price table only knows `claude-opus-5-5` and `gpt-5.6-luna`,
+      so claude/codex cost shows "no data" for the models actually used → O5c.
+- [ ] **O5b — Usage panel in the app** (render `get_usage`, window selector, per agent and
+      per project).
+- [ ] **O5c — Pricing that is real and customizable**: verified per-model prices plus a
+      user override file, so cost is never invented and anyone can add their models.
+- [ ] **O5 — Usage readers in Rust** (umbrella) (claude jsonl, codex jsonl, opencode sqlite, pricing
       table), per agent and per project, configurable time window; wired to the
       `agent-usage` panel. Parity with the legacy widget numbers on the author's machine.
 - [ ] **O6 — Docs and architecture rewrite** for the product: core + readers + extensions,

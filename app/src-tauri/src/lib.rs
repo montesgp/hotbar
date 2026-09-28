@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod config;
+mod usage;
 
 use serde::Serialize;
 use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
@@ -28,6 +29,21 @@ fn get_config(app: tauri::AppHandle) -> Result<ConfigPayload, String> {
 #[tauri::command]
 fn save_config(app: tauri::AppHandle, cfg: config::AppConfig) -> Result<(), String> {
     config::save(&app, &cfg)
+}
+
+/// Token spend per agent (claude, codex, opencode) and per project over
+/// `window`, read only from each agent's own local files - no external
+/// service or program involved. Runs off the main thread: the readers stream
+/// multi-megabyte jsonl files and query a SQLite database, which would
+/// otherwise stall the window.
+#[tauri::command]
+async fn get_usage(window: usage::TimeWindow) -> Result<usage::UsageSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = usage::resolve_paths(None).ok_or_else(|| "cannot resolve home directory".to_string())?;
+        Ok(usage::collect_usage(window, &paths, chrono::Local::now()))
+    })
+    .await
+    .map_err(|e| format!("usage task panicked: {e}"))?
 }
 
 /// Resolve the monitor named in config ("primary" or a device name). Falls
@@ -128,7 +144,7 @@ pub fn run() {
             position_right_center(&window, &monitor, cfg.margin, size)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_config, save_config])
+        .invoke_handler(tauri::generate_handler![get_config, save_config, get_usage])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
