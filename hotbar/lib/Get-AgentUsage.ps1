@@ -45,8 +45,8 @@
   store itself says 0.0, which is the real value for opencode's local models.
 
   HISTORY. The same stores also feed the per-agent panel (HB14): month-to-date
-  counters plus a per-project split for the projects that Herdr has open
-  (workspaces[].identity_cwd in %APPDATA%\herdr\session.json). claude sums
+  counters plus a per-project split, ranked by spend, over every project cwd
+  the agent's own store touched this month. claude sums
   every *.jsonl under .claude\projects (those files ARE billed, subagents and
   all), codex reads the LAST counter record per session file (cumulative, both
   token_usage_record and token_count shapes), opencode runs one SELECT per
@@ -852,9 +852,9 @@ function ConvertFrom-AgentTimestamp {
 <#
 .SYNOPSIS
   The canonical form of a project path: trimmed, slashes normalized to
-  backslashes, trailing separator removed. Herdr's session.json stores
-  identity_cwd WITH a trailing backslash ("C:\repositories\...\") and the
-  session jsonl stores vary, so every cwd goes through here before matching.
+  backslashes, trailing separator removed. The agents' own session stores
+  spell cwd inconsistently (mixed separators, an occasional trailing one), so
+  every cwd goes through here before it is used as a bucket key.
 #>
 function Normalize-AgentProjectPath {
   [CmdletBinding()]
@@ -866,59 +866,6 @@ function Normalize-AgentProjectPath {
   $p = $p.Replace('/', '\')
   $p = $p.TrimEnd([char[]]('\', ' '))
   return $p
-}
-
-<#
-.SYNOPSIS
-  The projects Herdr currently has open, from %APPDATA%\herdr\session.json.
-
-.DESCRIPTION
-  Verified shape (2026-09-26): version 3, workspaces[] each with identity_cwd,
-  e.g. "C:\repositories\personal\herdr-omniroute\" and
-  "C:\repositories\incoders\incoders-commerce\". Only those paths are matched
-  against the per-project buckets: the panel answers "how much did THIS open
-  project cost this month", not "name every repository that ever ran".
-#>
-function Get-HerdrOpenProjects {
-  [CmdletBinding()]
-  param([string]$AppDataDir)
-
-  $result = [pscustomobject]@{ Ok = $false; Projects = @(); Error = "" }
-
-  if (-not $AppDataDir) { $AppDataDir = $env:APPDATA }
-  if (-not $AppDataDir) { $result.Error = "no APPDATA"; return $result }
-
-  $path = [System.IO.Path]::Combine($AppDataDir, "herdr", "session.json")
-  if (-not [System.IO.File]::Exists($path)) {
-    $result.Error = "herdr session not found: $path"
-    return $result
-  }
-
-  try {
-    $parsed = ([System.IO.File]::ReadAllText($path)) | ConvertFrom-Json
-    if ($null -eq $parsed -or $null -eq $parsed.workspaces) {
-      $result.Error = "no workspaces in " + [System.IO.Path]::GetFileName($path)
-      return $result
-    }
-
-    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-    $projects = @()
-    foreach ($ws in @($parsed.workspaces)) {
-      $cwd = [string]$ws.identity_cwd
-      if (-not $cwd) { continue }
-      $norm = Normalize-AgentProjectPath $cwd
-      if (-not $norm) { continue }
-      if (-not $seen.Add($norm)) { continue }
-      $name = [System.IO.Path]::GetFileName($norm)
-      if (-not $name) { $name = $norm }
-      $projects += [pscustomobject]@{ Path = $norm; Name = $name }
-    }
-    $result.Ok = $true
-    $result.Projects = $projects
-  } catch {
-    $result.Error = Get-AgentFirstLine $_.Exception.Message
-  }
-  return $result
 }
 
 <#
@@ -1311,8 +1258,7 @@ FROM session WHERE time_updated >= 0
 '@ -replace "`r?`n", " "
 
 # The per-project SELECT: one row per canonical project root, this month's
-# totals. project.worktree is the canonical repo root, which is the same shape
-# Herdr's identity_cwd normalizes to.
+# totals. project.worktree is the canonical repo root opencode itself tracks.
 $script:UsageHistoryProjectSql = @'
 SELECT p.worktree,
        COALESCE(SUM(s.tokens_input), 0),
@@ -1433,15 +1379,17 @@ function Get-OpenCodeAgentHistory {
 
 <#
 .SYNOPSIS
-  One snapshot of all three agents' history plus Herdr's open projects, for the
-  per-agent panel and the self test.
+  One snapshot of all three agents' history, for the per-agent panel and the
+  self test.
 
 .DESCRIPTION
   Sequential, like Get-AgentUsageSnapshot: the scans are bounded by
   UsageHistoryMaxBytes (8 MB) across all files per agent, newest first, and the
   SQLite reads run with a busy timeout. A store that is missing, locked or
   unparsable comes back as Ok = $false with the reason in Error, never as
-  zeroes; an empty month is "sin actividad", not a failure.
+  zeroes; an empty month is "sin actividad", not a failure. Projects come only
+  from the agents' own session cwd values (each agent history already carries
+  a per-project split, ranked by spend); no external program is consulted.
 #>
 function Get-AgentHistorySnapshot {
   [CmdletBinding()]
@@ -1458,14 +1406,12 @@ function Get-AgentHistorySnapshot {
   $agents += Get-CodexAgentHistory -CodexDir $(if ($paths) { $paths.CodexDir } else { "" }) -MaxBytes $MaxBytes
   $agents += Get-OpenCodeAgentHistory -DatabasePath $(if ($paths) { $paths.OpenCodeDb } else { "" }) -BusyTimeoutMs $BusyTimeoutMs
 
-  $herdr = Get-HerdrOpenProjects
   $monthStart = Get-AgentMonthStartLocal
 
   return [pscustomobject]@{
     TakenAt    = Get-Date
     MonthStart = $monthStart
     MonthLabel = $script:AgentMonthNames[[int]$monthStart.Month - 1]
-    Herdr      = $herdr
     Agents     = $agents
   }
 }

@@ -32,13 +32,6 @@
       "tooltip": "Uso de la sesion en vivo (claude/codex/opencode) - saldo en tiempo real"
     },
     {
-      "id": "omniroute",
-      "label": "omniroute",
-      "glyph": "0x25A3",
-      "action": "omniroute-status",
-      "tooltip": "Estado del gateway OmniRoute (UP/DOWN + combos)"
-    },
-    {
       "id": "settings",
       "label": "ajustes",
       "glyph": "0x2699",

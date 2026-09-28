@@ -245,13 +245,6 @@ fn default_items() -> Vec<Item> {
             tooltip: "Uso de la sesion en vivo (claude/codex/opencode) - saldo en tiempo real".into(),
         },
         Item {
-            id: "omniroute".into(),
-            label: "omniroute".into(),
-            glyph: "0x25A3".into(),
-            action: "omniroute-status".into(),
-            tooltip: "Estado del gateway OmniRoute (UP/DOWN + combos)".into(),
-        },
-        Item {
             id: "settings".into(),
             label: "ajustes".into(),
             glyph: "0x2699".into(),

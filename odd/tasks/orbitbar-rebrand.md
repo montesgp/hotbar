@@ -42,12 +42,25 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       scope in this repo. **Pending (user):** create the local `.env` with the real
       `OMNIROUTE_NODE` / `OMNIROUTE_ENTRY` (tool guardrail blocks writing `.env`); until
       then the OmniRoute start actions fall back to `node` on PATH.
-- [ ] **O2 — Drop the Herdr dependency from the usage reader.** Remove
+- [x] **O2 — Drop the Herdr dependency from the usage reader.** Remove
       `Get-HerdrOpenProjects` and its consumers in `hotbar.ps1`; projects come only from the
-      agents' session `cwd`s. Usage panel keeps working.
-- [ ] **O3 — Move Herdr/OmniRoute out of the core.** `herdr-plugin.toml`, `extensions/`,
+      agents' session `cwd`s. Usage panel keeps working. Herdr's session list only chose
+      which repo roots to show; the panel now lists each agent's top 5 projects of the month
+      by output tokens (`$script:AgentHistoryMaxProjectsShown`), one row per session `cwd`
+      (no merging of subfolders into a repo root).
+- [x] **O3 — Move Herdr/OmniRoute out of the core.** `herdr-plugin.toml`, `extensions/`,
       `scripts/`, OmniRoute readers and the `omniroute-status` action go to
-      `extensions/herdr/` and `extensions/omniroute/`, clearly marked optional.
+      `extensions/herdr/` and `extensions/omniroute/`, clearly marked optional. OmniRoute
+      readers load only when present; missing extension renders "extension not installed".
+      Omniroute item removed from default items (Tauri + example config). `.env` loaders
+      strip quotes; unset `OMNIROUTE_ENTRY` fails with a clear message.
+      Route (O2+O3): one delegated writer (shared `hotbar.ps1`). Evidence: PS parse 0 errors
+      on 13 files; `Get-AgentHistorySnapshot` without Herdr → claude/codex/opencode `Ok`;
+      `hotbar.ps1 -SelfTest` → PASS on the author's machine (gateway UP, 5 panel lines);
+      `cargo test` 13/13. O1 independent verifier: PASS (two minor findings fixed here).
+      RDD: two candidates declined by the user (base `main` and base `origin/main`).
+      **Follow-up:** `.env.example` sets `OMNIROUTE_ENTRY=omniroute/bin/omniroute.mjs` as a
+      value; it should be a commented placeholder (tools cannot edit `.env*` files).
 - [ ] **O4 — Rename hotbar → orbitbar.** Folders, Tauri identifier/productName, Cargo and npm
       package names, UI copy, config paths. Identifier change moves the config dir
       (`com.hotbar.app` → `com.orbitbar.app`): migrate the existing config on first launch.

@@ -8,8 +8,10 @@
   API for this, because every /api route is authenticated and the bar must never
   read, print or store a key.
 
-  The check runs through the windowless helper (lib\Invoke-Native.ps1), so opening
-  the inline panel never flashes a console window on top of the desktop.
+  The check runs through the windowless helper (hotbar\lib\Invoke-Native.ps1 -
+  shared with the core usage reader, so it stays in the core tree even though
+  this reader is an optional extension), so opening the inline panel never
+  flashes a console window on top of the desktop.
 
   NAMING RULE (do not "simplify" this): PowerShell variables are case-insensitive,
   so a variable called $Port that holds a Process object silently overwrites a
@@ -43,7 +45,10 @@ function Start-HotbarGatewayProbe {
   param()
 
   if (-not $script:InvokeNativeLoaded) {
-    $lib = [System.IO.Path]::Combine($PSScriptRoot, "Invoke-Native.ps1")
+    # Shared helper, stays in the core tree: extensions/omniroute/hotbar/ ->
+    # extensions/omniroute -> extensions -> repo root -> hotbar/lib.
+    $hotbarLib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, "..", "..", "..", "hotbar", "lib"))
+    $lib = [System.IO.Path]::Combine($hotbarLib, "Invoke-Native.ps1")
     if (-not [System.IO.File]::Exists($lib)) {
       return [pscustomobject]@{ Process = $null; StdOutTask = $null; StdErrTask = $null; StartError = "windowless helper not found: $lib" }
     }

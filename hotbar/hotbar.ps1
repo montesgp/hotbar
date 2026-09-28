@@ -98,6 +98,11 @@ $script:CollapsedSize = 46
 $script:DefaultMargin = 8
 $script:MaxPanelChars = 38
 $script:UsageRefreshSeconds = 5
+# Per-agent history panel: how many of the agent's own top-spending projects
+# this month are rendered as rows. Local-only replacement for the old
+# Herdr-open-projects filter (O2): ranks by output tokens instead of asking an
+# external program which projects are "open".
+$script:AgentHistoryMaxProjectsShown = 5
 $script:GlyphFont = "Segoe UI Symbol, Segoe MDL2 Assets, Segoe UI"
 $script:PanelFont = "Consolas, Courier New"
 $script:PanelFontSize = 10.0
@@ -176,10 +181,11 @@ foreach ($assembly in @("PresentationFramework", "PresentationCore", "WindowsBas
 }
 
 # The data readers are dot-sourced at SCRIPT scope on purpose. Read-SqliteQuery is
-# only checked for existence here: Get-OmniRouteCombos dot-sources it itself, and
-# loading it twice would re-parse 13 KB for nothing.
+# only checked for existence here: Get-AgentUsage dot-sources it itself, and
+# loading it twice would re-parse 13 KB for nothing. These four are the core: the
+# bar must run without them, so a missing one is fatal.
 $script:LibRoot = [System.IO.Path]::Combine($PSScriptRoot, "lib")
-foreach ($needed in @("Invoke-Native.ps1", "Get-OmniRouteStatus.ps1", "Get-OmniRouteCombos.ps1", "Read-SqliteQuery.ps1", "Get-AgentUsage.ps1", "Get-AgentPricing.ps1")) {
+foreach ($needed in @("Invoke-Native.ps1", "Read-SqliteQuery.ps1", "Get-AgentUsage.ps1", "Get-AgentPricing.ps1")) {
   $path = [System.IO.Path]::Combine($script:LibRoot, $needed)
   if (-not [System.IO.File]::Exists($path)) {
     Write-Output ("hotbar: missing data helper " + $path)
@@ -187,12 +193,25 @@ foreach ($needed in @("Invoke-Native.ps1", "Get-OmniRouteStatus.ps1", "Get-OmniR
   }
 }
 . ([System.IO.Path]::Combine($script:LibRoot, "Invoke-Native.ps1"))
-. ([System.IO.Path]::Combine($script:LibRoot, "Get-OmniRouteStatus.ps1"))
-. ([System.IO.Path]::Combine($script:LibRoot, "Get-OmniRouteCombos.ps1"))
 . ([System.IO.Path]::Combine($script:LibRoot, "Get-AgentUsage.ps1"))
 # Pricing is dot-sourced explicitly (Get-AgentUsage uses it). It only defines
 # constants and functions, so loading it twice would only re-parse for nothing.
 . ([System.IO.Path]::Combine($script:LibRoot, "Get-AgentPricing.ps1"))
+
+# OmniRoute is an optional extension (odd/orbitbar-rebrand O3): its readers live
+# under extensions/omniroute/hotbar/, not in hotbar/lib. Load them only when
+# present, so a clone without the extension still runs the bar; the
+# omniroute-status item then renders "extension not installed" (see
+# Get-HotbarOmniRouteSnapshot) instead of failing on an undefined function.
+$script:RepoRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, ".."))
+$script:OmniRouteExtensionLib = [System.IO.Path]::Combine($script:RepoRoot, "extensions", "omniroute", "hotbar")
+$omniRouteStatusPath = [System.IO.Path]::Combine($script:OmniRouteExtensionLib, "Get-OmniRouteStatus.ps1")
+$omniRouteCombosPath = [System.IO.Path]::Combine($script:OmniRouteExtensionLib, "Get-OmniRouteCombos.ps1")
+$script:OmniRouteExtensionAvailable = ([System.IO.File]::Exists($omniRouteStatusPath) -and [System.IO.File]::Exists($omniRouteCombosPath))
+if ($script:OmniRouteExtensionAvailable) {
+  . $omniRouteStatusPath
+  . $omniRouteCombosPath
+}
 
 # ---------------------------------------------------------------------------
 # The window markup. Single-quoted here-string: no PowerShell expansion touches it.
@@ -962,6 +981,15 @@ function Get-HotbarOmniRouteSnapshot {
     [int]$BusyTimeoutMs = 1200
   )
 
+  if (-not $script:OmniRouteExtensionAvailable) {
+    return [pscustomobject]@{
+      Gateway          = [pscustomobject]@{ Up = $false; Port = $null; Detail = "extension not installed" }
+      Combos           = [pscustomobject]@{ Ok = $false; Combos = @(); Provider = ""; Error = "extension not installed"; ActiveComboName = "" }
+      TakenAt          = (Get-Date)
+      ExtensionMissing = $true
+    }
+  }
+
   $portJob = $null
   try { $portJob = Start-HotbarGatewayProbe } catch { }
 
@@ -997,6 +1025,13 @@ function Get-HotbarOmniRouteLines {
 
   $lines = @()
   $lines += New-HotbarLine "OmniRoute gateway" $script:ColorGold 11 $true
+
+  if ($Snapshot.ExtensionMissing) {
+    $lines += New-HotbarLine "  extension not installed" $script:ColorDim 9
+    $lines += New-HotbarLine (Format-HotbarLine "  see extensions/README.md") $script:ColorDim 9
+    $lines += New-HotbarLine (Format-HotbarLine "  click the icon again to close") $script:ColorDim 9
+    return $lines
+  }
 
   if ($Snapshot.Gateway.Up) {
     $lines += New-HotbarLine ("  UP     localhost:" + $Snapshot.Gateway.Port) $script:ColorUp
@@ -1326,23 +1361,22 @@ function Toggle-HotbarUsagePanel {
   Draws one month-to-date history panel for a single agent.
 
 .DESCRIPTION
-  One read of the stores, rendered over the projects Herdr currently has open:
+  One read of the stores, rendered over the agent's own top projects this
+  month (ranked by output tokens, no external program consulted):
 
     claude sep
       mes: out 158.3k  $28.17 (est)
       incoders-commerce 149.9k  $27.37 (est)
-      herdr-omniroute: sin datos
       (est) = costo estimado
       click de nuevo para cerrar
 
   Money is honest about what it is: claude/codex stores keep no cost field, so
   their cost here is the official-price estimate and is marked (est); opencode
-  stores a cost and its local model really is $0.00. A project shows "sin datos"
-  when no session in the read budget touched it, or "costo: sin datos" when it
-  had tokens but no price could be applied (unknown model). A "-" after a session
-  count marks an approximate read: the Detail carried by the snapshot says how
-  much of the budget was spent, and the panel never presents the sample as the
-  total.
+  stores a cost and its local model really is $0.00. A project shows
+  "costo: sin datos" when it had tokens but no price could be applied (unknown
+  model). A "-" after a session count marks an approximate read: the Detail
+  carried by the snapshot says how much of the budget was spent, and the panel
+  never presents the sample as the total.
 
   The read is snapshot-only: unlike the live usage panel there is no timer, so
   the numbers are what the store said at click time and stay until the next
@@ -1395,14 +1429,9 @@ function Get-HotbarAgentLines {
 
   $anyEst = $false
   if ($matched.MonthEstimated) { $anyEst = $true }
-  foreach ($herdr in @($snapshot.Herdr.Projects)) {
-    $project = Find-HotbarAgentProject -Agent $matched -HerdrPath $herdr.Path
-    if ($null -eq $project) {
-      $lines += New-HotbarLine (Format-HotbarLine ("  " + $herdr.Name + ": sin datos")) $script:ColorDim 9
-      continue
-    }
-
-    $text = "  " + $herdr.Name + " " + (Format-HotbarCompactCount $project.Output)
+  $topProjects = @($matched.Projects | Where-Object { $_.Entries -gt 0 } | Select-Object -First $script:AgentHistoryMaxProjectsShown)
+  foreach ($project in $topProjects) {
+    $text = "  " + $project.Name + " " + (Format-HotbarCompactCount $project.Output)
     $lines += New-HotbarLine (Format-HotbarLine $text) $script:ColorText
 
     if ($null -ne $project.Cost) {
@@ -1419,66 +1448,6 @@ function Get-HotbarAgentLines {
   }
   $lines += New-HotbarLine (Format-HotbarLine "  click de nuevo para cerrar") $script:ColorDim 9
   return $lines
-}
-
-# The bucket whose normalized path IS the Herdr repo root, or whose path is a
-# subdirectory of it. A repo row must not say "sin datos" while a session ran in
-# a subfolder (for example Commerce.Web under incoders-commerce): both belong to
-# the same open project, so the subdirectory buckets are summed into it.
-function Find-HotbarAgentProject {
-  [CmdletBinding()]
-  param($Agent, [string]$HerdrPath)
-
-  $root = Normalize-AgentProjectPath $HerdrPath
-  if (-not $root) { return $null }
-  $prefix = $root + "\"
-
-  $matched = @()
-  foreach ($project in @($Agent.Projects)) {
-    $path = Normalize-AgentProjectPath ([string]$project.Path)
-    if (-not $path) { continue }
-    if ($path -eq $root -or $path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-      $matched += $project
-    }
-  }
-
-  if (@($matched).Count -eq 0) { return $null }
-
-  $input = 0; $output = 0; $cacheRead = 0; $cacheWrite = 0; $reasoning = 0; $entries = 0
-  $model = ""
-  $costCount = 0; $estCount = 0; $realCount = 0
-  $costSum = 0.0
-  foreach ($project in $matched) {
-    $input += [long]$project.Input
-    $output += [long]$project.Output
-    $cacheRead += [long]$project.CacheRead
-    $cacheWrite += [long]$project.CacheWrite
-    $reasoning += [long]$project.Reasoning
-    $entries += [int]$project.Entries
-    if (-not $model -and $project.Model) { $model = [string]$project.Model }
-    if ($null -ne $project.Cost) {
-      $costCount++
-      $costSum += [double]$project.Cost
-      if ($project.Estimated) { $estCount++ } else { $realCount++ }
-    }
-  }
-
-  $cost = $null
-  $estimated = $false
-  if ($costCount -gt 0) {
-    $cost = [Math]::Round($costSum, 4)
-    # (est) only when every priced bucket was an estimate; a mix keeps the
-    # conservative marker; a fully real set (opencode) stays unmarked. A real
-    # zero must not look like an estimate that failed to attach.
-    if ($realCount -eq 0 -or $estCount -gt 0) { $estimated = $true }
-  }
-
-  return [pscustomobject]@{
-    Path = $root; Name = [System.IO.Path]::GetFileName($root)
-    Input = $input; Output = $output; CacheRead = $cacheRead; CacheWrite = $cacheWrite
-    Reasoning = $reasoning; Entries = $entries; Model = $model
-    Cost = $cost; Estimated = $estimated
-  }
 }
 
 # Toggles one agent history panel. "AgentPanelActive" is per agent panel (the
