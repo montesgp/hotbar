@@ -79,10 +79,17 @@ Estos valores son la fuente de verdad del port; están medidos, no estimados:
       rescaled` prueba que el guard tiene dientes. Sin runner de frontend (`build` = `tsc &&
       vite build`), el defecto `<html>` vs `<body>` no tiene test automático: pendiente de
       decisión si se añade vitest.
-- [ ] **HB29** — Autostart por config: campo `autoStart` (default **true**) en config v2,
+- [x] **HB29** — Autostart por config: campo `autoStart` (default **true**) en config v2,
       `tauri-plugin-autostart` (registro Windows / LaunchAgent macOS / `.desktop` Linux),
-      comandos `get_autostart` / `set_autostart`, ítem de toggle en la barra. Honesto: en
-      Linux el autostart solo funciona para apps instaladas, no para el binario suelto.
+      ítem de toggle `toggle-autostart` en la barra (usa la API JS del plugin, no comandos
+      propios). Honesto: en Linux el autostart solo funciona para apps instaladas, no para
+      el binario suelto. Evidencia: commit `a80178a` en rama `feat/autostart`; `cargo test`
+      13/13 OK (incluye migración sin `autoStart` → true y `false` explícito preservado),
+      `tsc --noEmit` y `cargo clippy` limpios. Entrada del SO nombrada `Orbitbar` (nombre
+      nuevo del producto, 2026-09-28) para no dejar una entrada huérfana al renombrar.
+      Ruta: inline (1 archivo tocado, trabajo ya escrito). RDD: riesgo `medium`,
+      `under_budget` (251 líneas) → revisión pendiente en el slice. **Pendiente**: smoke
+      real (lanzar la app y ver la entrada en `HKCU\...\Run`), no verificado en sesión.
 - [ ] **HB30** — Launcher portable en raíz: `hotbar.sh` + `hotbar.cmd` que preferifican el
       binario ya compilado y caen a dev mode; documentado en README como "un comando".
 - [ ] **HB31** — Docs de colaboración: `CONTRIBUTING.md` (cómo levantar issue, qué
