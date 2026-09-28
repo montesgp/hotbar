@@ -3,6 +3,7 @@ mod config;
 
 use serde::Serialize;
 use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri_plugin_autostart::ManagerExt;
 
 /// Physical window sizes for the two visual states (must match src/main.ts).
 /// The expanded bar is a 72x400 crescent and the collapsed state is a 46x46
@@ -70,13 +71,43 @@ fn position_right_center(
     window.set_position(PhysicalPosition::new(x, y))
 }
 
+/// The config is the source of truth for autostart, so reconcile the OS entry
+/// against it on every launch instead of only ever writing it once. Three cases
+/// matter and only two need a write:
+///   - fresh install, autoStart defaults to true, no entry exists  -> enable
+///   - the user turned autostart off in their OS settings          -> enable again
+///   - the user turned it off here, entry still registered        -> disable
+///
+/// Failing to register is never fatal. A hotbar that refuses to launch because
+/// a Run key could not be written is strictly worse than one that launches
+/// without autostart, so this logs and lets startup continue.
+fn sync_autostart(app: &tauri::AppHandle, cfg: &config::AppConfig) {
+    let manager = app.autolaunch();
+    let outcome = match manager.is_enabled() {
+        Ok(true) if !cfg.auto_start => manager.disable(),
+        Ok(false) if cfg.auto_start => manager.enable(),
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    };
+    match outcome {
+        Ok(()) => {}
+        Err(e) => eprintln!("autostart could not be reconciled with config: {e}"),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("Orbitbar")
+                .build(),
+        )
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
             let cfg = config::load(app.handle())?;
+            sync_autostart(app.handle(), &cfg);
 
             // Start in the persisted state: collapsed is a small chevron bar,
             // expanded is the full launcher; both sit right-center on the

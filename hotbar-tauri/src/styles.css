@@ -184,6 +184,12 @@ body.moon .bar {
   background: var(--hb-press-bg);
 }
 
+/* An autostart toggle that is currently off. Dimming reads as "disabled"
+   without touching the glyph, which belongs to the user's config. */
+.cell--off {
+  opacity: 0.42;
+}
+
 .cell .glyph {
   display: block;
   line-height: 1;

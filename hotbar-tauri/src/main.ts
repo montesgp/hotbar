@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  disable as disableAutostart,
+  enable as enableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
+import {
   PhysicalPosition,
   PhysicalSize,
 } from "@tauri-apps/api/dpi";
@@ -43,6 +48,8 @@ export interface HotbarConfig {
   collapsed: boolean;
   theme: string;
   fontSize: number;
+  /** Desired autostart state. Rust reconciles the OS entry against it on start. */
+  autoStart: boolean;
   items: Item[];
 }
 
@@ -229,6 +236,21 @@ function enableDrag(cfg: HotbarConfig): void {
   });
 }
 
+/**
+ * The autostart cell is a stateful toggle, not a link, so it has to render its
+ * current state. The bar is glyph-only and the glyph comes from the user's
+ * config, so "off" is shown by dimming the cell and spelling the state out in
+ * the tooltip rather than by swapping the glyph: swapping it here would fight
+ * the config on the next render and silently drop the user's chosen icon.
+ */
+function applyAutostartUi(cell: HTMLElement, baseTooltip: string, enabled: boolean) {
+  const state = enabled ? "autostart on" : "autostart off";
+  cell.classList.toggle("cell--off", !enabled);
+  const text = baseTooltip ? `${baseTooltip} · ${state}` : state;
+  cell.title = text;
+  cell.setAttribute("aria-label", text);
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   try {
     const payload = await invoke<ConfigPayload>("get_config");
@@ -241,6 +263,32 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     const cells = document.querySelector<HTMLElement>("#cells");
     if (cells) renderCells(cells, cfg.items);
+
+    // Autostart toggles: cell element -> the tooltip the config declared, kept
+    // so the state suffix can be recomposed instead of appended twice.
+    const autostartCells = new Map<HTMLElement, string>();
+    if (cells) {
+      for (const item of cfg.items) {
+        if (item.action !== "toggle-autostart") continue;
+        const cell = cells.querySelector<HTMLElement>(
+          `.cell[data-id="${CSS.escape(item.id)}"]`,
+        );
+        if (cell) autostartCells.set(cell, item.tooltip);
+      }
+    }
+
+    // Read the real OS registration, not the config. They can disagree: the
+    // user can revoke the Run key in OS settings without touching our config.
+    if (autostartCells.size > 0) {
+      try {
+        const on = await isAutostartEnabled();
+        for (const [cell, tooltip] of autostartCells) {
+          applyAutostartUi(cell, tooltip, on);
+        }
+      } catch (err) {
+        console.error("hotbar: could not read autostart state", err);
+      }
+    }
 
     let panelOpen = false;
     setCollapsedUi(cfg.collapsed);
@@ -279,6 +327,27 @@ window.addEventListener("DOMContentLoaded", async () => {
       cells.addEventListener("click", async (ev) => {
         const target = (ev.target as HTMLElement).closest<HTMLElement>(".cell");
         if (!target) return;
+
+        // A toggle acts in place. It must not open the panel, and it must not
+        // report success it did not get: if the OS refuses the write we leave
+        // both the config and the cell showing the old state.
+        if (autostartCells.has(target)) {
+          const tooltip = autostartCells.get(target) ?? "";
+          const next = !cfg.autoStart;
+          try {
+            if (next) await enableAutostart();
+            else await disableAutostart();
+          } catch (err) {
+            console.error("hotbar: autostart could not be changed", err);
+            applyAutostartUi(target, tooltip, cfg.autoStart);
+            return;
+          }
+          cfg.autoStart = next;
+          applyAutostartUi(target, tooltip, next);
+          await persistConfig(cfg);
+          return;
+        }
+
         const body = document.querySelector<HTMLElement>("#panel-body");
         if (body) {
           body.replaceChildren();

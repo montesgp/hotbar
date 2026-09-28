@@ -21,6 +21,12 @@ pub struct AppConfig {
     pub collapsed: bool,
     pub theme: String,
     pub font_size: f64,
+    /// Whether the app should be registered to launch at login. The config is
+    /// the source of truth: lib.rs reconciles the OS entry against it on every
+    /// start. Defaults to true, and because AppConfig carries a container-level
+    /// serde default, a config written before this field existed simply gets
+    /// true rather than failing to parse.
+    pub auto_start: bool,
     pub items: Vec<Item>,
 }
 
@@ -32,6 +38,7 @@ impl Default for AppConfig {
             collapsed: false,
             theme: "classic".into(),
             font_size: 10.0,
+            auto_start: true,
             items: default_items(),
         }
     }
@@ -251,6 +258,15 @@ fn default_items() -> Vec<Item> {
             action: "edit-config".into(),
             tooltip: "Abrir hotbar/config.json".into(),
         },
+        Item {
+            id: "autostart".into(),
+            label: "autostart".into(),
+            // U+23FB POWER SYMBOL. The state is carried by dimming and the
+            // tooltip, not by a second glyph, so the icon stays the user's.
+            glyph: "0x23FB".into(),
+            action: "toggle-autostart".into(),
+            tooltip: "Arrancar Hotbar al iniciar sesion".into(),
+        },
     ]
 }
 
@@ -316,6 +332,27 @@ mod tests {
         assert_eq!(cfg.theme, "dark");
         assert_eq!(cfg.monitor, "primary");
         assert!(!cfg.items.is_empty(), "items must fall back to the defaults");
+    }
+
+    /// A config written before `autoStart` existed must migrate to true rather
+    /// than fail to parse, otherwise upgrading the app would silently drop the
+    /// user's whole setup. This is the case that makes the container-level
+    /// serde default load-bearing.
+    #[test]
+    fn a_config_without_autostart_migrates_to_true() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"theme":"classic"}"#).unwrap();
+        assert!(
+            cfg.auto_start,
+            "an older config must opt in to autostart, not out of it"
+        );
+    }
+
+    /// An explicit false has to win over the default, otherwise the toggle
+    /// could never stick.
+    #[test]
+    fn an_explicit_auto_start_false_is_preserved() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"autoStart":false}"#).unwrap();
+        assert!(!cfg.auto_start);
     }
 
     /// The default set must stay usable: the bar renders nothing if there is
