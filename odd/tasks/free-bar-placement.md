@@ -76,7 +76,8 @@ is test-first; the frontend only applies the result.
       exists, the walk finds no `.git`, and the fallback keeps the raw cwd. Fix: a missing cwd
       with no repo found buckets under its topmost missing directory (the deleted/renamed repo
       root). (b) Codex lists `%TEMP%\gentle-ai-codex-reviewer-*` (gentle-ai review runs) and
-      non-repo cwds (`~`, `C:epositories\personal`). User decision (option C): **exclude**
+      non-repo cwds (`~`, `C:
+epositories\personal`). User decision (option C): **exclude**
       them from both the project list and the agent totals. Rule: cwd under the OS temp dir →
       excluded; existing cwd with no repo ancestor → excluded; missing cwd → (a). Same rule for
       Claude, Codex and OpenCode. Test-first (`cargo test`). Docs: README data/usage notes.
@@ -86,6 +87,11 @@ is test-first; the frontend only applies the result.
       Windows and forces a full frame redraw. Try removing the toggle (e.g. keep the window
       resizable with no resize hit-test, or lift the min/max lock explicitly) and avoid any
       resize that is not needed. User verifies on screen.
+- [x] **F8 — No drop shadow around the bar.** Reported 2026-09-29: a dark halo around the
+      rounded ends, strongest in Light or over white windows. Cause: `box-shadow: 0 2px 6px
+      rgba(0,0,0,0.65)` on `.bar`, the panel and the context menu (`styles.css`). Removed all
+      three. Route: inline (one file, mechanical). Evidence: `npm run build` ok. Manual, pending:
+      Light and Dark over a white window.
 Route: one delegated writer for F1–F4 (2+ non-trivial files: `lib.rs`, `config.rs`,
 `main.ts`, `styles.css`, `Cargo.toml`, docs). One work-unit commit per task.
 
@@ -193,6 +199,10 @@ then promote to `main` without a tag unless the user asks for a release.
   build` ok, `cargo test` 145 passed, clippy clean.
   User must check on screen: pick each menu entry (no flash), open menu on a bar near the left
   edge, drag, collapse/expand, panel open/close.
+
+- 2026-09-29 user test of the release build (F6, F7): "mejoramos un monton" — flash and project
+  rows fixed. New reports: shadow halo (F8) and the `omniroute-status` cell shows only a
+  placeholder (the action was never implemented in the Tauri app).
 
 ## Next step
 
