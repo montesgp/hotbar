@@ -233,7 +233,8 @@ bar. See [extensions/README.md](extensions/README.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Working with an AI coding agent? Point
+it at [AGENTS.md](AGENTS.md).
 
 ## License
 
