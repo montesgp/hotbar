@@ -1,202 +1,172 @@
-# Architecture — hotbar
+# Architecture
 
 ## What this is
 
-`hotbar` is a **standalone Windows widget** that turns the data your AI agents
-already wrote to disk into a glanceable, honest money readout: per-agent month
-totals and per-open-project breakdowns for Claude Code, Codex CLI and OpenCode,
-plus an optional inline status panel for the
-[OmniRoute](https://github.com/montesgp/omniroute) gateway.
+Orbitbar is a Tauri 2 desktop app: a Rust core plus a TypeScript/HTML
+frontend, packaged as one native binary per OS (Windows, macOS, Linux). It
+reads the token-usage history that Claude Code, Codex and OpenCode write to
+disk, prices it, and renders it in a small always-on-top bar, overall and per
+project. Installation and usage are covered in the [root README](../README.md).
 
-The widget is the product. The OmniRoute gateway surfaces — a Herdr plugin, a pi
-extension and a status popup — are older, in-terminal surfaces kept supported as
-**legacy optional** extras; none of them is required for the widget to work.
-
-This is **Windows v1**. The runtime is Windows PowerShell 5.1 + WPF. The only
-cross-platform advance is architectural: every data source is read through a
-small reader layer (`hotbar/lib/*.ps1`) with a common shape, so a future port
-replaces readers instead of rewriting the UI.
-
-## Where it mounts
+## How it fits together
 
 ```mermaid
 flowchart LR
-  subgraph BAR["hotbar — widget WPF de Windows"]
+  subgraph FE["Frontend — app/src (TypeScript)"]
     direction TB
-    W["Barra flotante<br/>siempre encima · media luna · colapsable"]
-    P1["Paneles por agente<br/>mes · por proyecto · dinero honesto"]
-    P2["Panel inline de OmniRoute<br/>(opcional)"]
-    W --- P1
-    W --- P2
+    MAIN["main.ts<br/>window state, theme, item clicks"]
+    VIEW["usage-view.ts<br/>pure view-model, formatting"]
+    MAIN --> VIEW
   end
-  subgraph DATA["Capa de datos — hotbar/lib (desacoplada)"]
+  subgraph BE["Rust core — app/src-tauri/src"]
     direction TB
-    R1["Get-AgentUsage.ps1<br/>claude JSONL · codex JSONL · opencode DB"]
-    R2["Get-AgentPricing.ps1<br/>precios oficiales + estimador"]
-    R3["Get-OmniRouteStatus.ps1 + Combos<br/>netstat :20128 · storage.sqlite"]
-    R4["Read-SqliteQuery.ps1<br/>sqlite3.exe · winsqlite3.dll"]
+    CMD["Tauri commands<br/>get_config · save_config · get_usage<br/>get_config_path · ensure_pricing_file · quit_app"]
+    CFG["config.rs<br/>schema, load/save, themes"]
+    USAGE["usage/mod.rs<br/>collect_usage, TimeWindow"]
+    PRICE["usage/pricing.rs<br/>built-in table + pricing.json"]
+    CMD --> CFG
+    CMD --> USAGE
+    USAGE --> PRICE
   end
-  subgraph AGENTES["Agentes"]
+  subgraph READERS["Per-agent readers — app/src-tauri/src/usage"]
     direction TB
-    CC["Claude Code"]
-    CX["Codex CLI"]
-    OP["OpenCode"]
+    RC["claude.rs"]
+    RX["codex.rs"]
+    RO["opencode.rs"]
   end
-  subgraph USER["Usuario"]
+  subgraph SRC["Local files the agents wrote"]
     direction TB
-    H["Herdr session.json<br/>(proyectos abiertos)"]
-  end
-  subgraph HERDR["Legacy opcional"]
-    direction TB
-    PL["herdr.omniroute plugin<br/>status · start · dashboard · popup"]
-  end
-  subgraph GW["OmniRoute gateway — localhost:20128 (opcional)"]
-    direction TB
-    S["storage.sqlite · combos"]
+    CC["~/.claude/projects/**/*.jsonl"]
+    CX["~/.codex/sessions/**/*.jsonl"]
+    OP["~/.local/share/opencode/opencode.db"]
   end
 
-  CC -->|"escribe historial"| R1
-  CX -->|"escribe historial"| R1
-  OP -->|"escribe sqlite"| R1
-  H -->|"proyectos abiertos"| R1
-  R1 --> P1
-  R2 --> P1
-  R3 --> P2
-  R4 -.-> R1
-  R4 -.-> R3
-  GW -->|"solo lectura"| R3
-  PL -.->|"popup status"| GW
-  PL -.->|"scripts status/start"| S
+  MAIN -->|"invoke()"| CMD
+  USAGE --> RC
+  USAGE --> RX
+  USAGE --> RO
+  RC -->|"read-only"| CC
+  RX -->|"read-only"| CX
+  RO -->|"read-only SQLite"| OP
+  CMD -->|"JSON payload"| MAIN
 ```
+
+Every read is a local file, and the frontend talks to the Rust core only
+through Tauri's `invoke()` IPC.
 
 ## Layers
 
 | Layer | Component | Responsibility |
 | --- | --- | --- |
-| 0 — Widget | `hotbar/hotbar.ps1` + `launch-hotbar.ps1` | Floating always-on-top half-moon bar: config-driven cells, collapse/expand, panel per agent, inline OmniRoute panel, single instance, self test |
-| 1 — Datos | `hotbar/lib/*.ps1` | Decoupled read-only readers: agent histories, open projects, gateway status/combos, SQLite access; pricing table + estimator |
-| 2 — Fuentes | Claude JSONL · codex JSONL · opencode.db · Herdr session.json · OmniRoute storage.sqlite | Files the agents/Herdr/gateway themselves wrote; the widget never modifies them |
-| 3 — Legacy opcional | Herdr plugin + pi extension + status popup | The older in-TUI surface around OmniRoute; supported but not required |
+| Window/UI | `app/src/main.ts`, `app/src/styles.css`, `app/index.html` | Crescent bar geometry, collapse/expand, drag, theme application, item clicks, panel and context-menu toggling |
+| View-model | `app/src/usage-view.ts` | Pure functions that turn a `UsageSnapshot` into rendered lines — no DOM, unit-testable in isolation |
+| Tauri commands | `app/src-tauri/src/lib.rs` | `get_config`, `save_config`, `get_usage`, `get_config_path`, `ensure_pricing_file`, `quit_app`; window placement and autostart reconciliation on launch |
+| Config | `app/src-tauri/src/config.rs` | Schema (`AppConfig`), per-OS config dir resolution, load/save, the `dark` and `light` theme palettes |
+| Usage aggregation | `app/src-tauri/src/usage/mod.rs` | `TimeWindow`, `collect_usage`, project-path normalization, the `UsageSnapshot` shape returned to the frontend |
+| Per-agent readers | `app/src-tauri/src/usage/{claude,codex,opencode}.rs` | One reader per agent store, each returning its own `AgentUsageReport` so a broken store never hides the other two |
+| Pricing | `app/src-tauri/src/usage/pricing.rs` | Built-in price table (sourced, dated) plus `pricing.json` override loading and cost estimation |
 
-Layer 1 is the boundary that makes the widget portable: the widget only knows the
-reader shape, never the store format.
+## Interaction model
 
-## The widget layer
+- **Usage panel.** Clicking an agent cell opens the panel to the left of the
+  bar, always on the Today window. The window selector inside the panel is a
+  session-only choice and is never written to `config.json`. Clicking the same
+  cell again, pressing Escape or using the close button closes it.
+- **Context menu.** A right click on the bar (or the collapsed tab), or a left
+  click on the settings cell, opens a menu card inside the webview. The window
+  grows to make room for it and shrinks back on close; clicking the settings
+  cell again, clicking outside the card or pressing Escape closes it. Only one
+  of the panel and the menu is open at a time. While the window is being
+  resized the page is painted invisible (`body.resizing`) so intermediate
+  frames never reach the screen.
+- **Themes.** `dark` (default) and `light` are palettes in `config.rs`; the
+  frontend maps them to `--ob-*` CSS custom properties. Choosing a theme in
+  the menu saves it and re-applies the palette live. An unknown name resolves
+  to `dark`.
 
-The bar is deliberately **not** a Herdr pane. Three constraints drove that:
+## Data flow: opening the usage panel
 
-- **It must outlive the session.** A pane is opened and closed by Herdr; the bar
-  is a desktop fixture that must stay up whether Herdr is running, restored, or
-  absent.
-- **It must not cost layout space.** `placement = "popup"` reserves nothing while
-  closed and borrows the terminal while open. A topmost window costs nothing at
-  all and draws over Herdr instead of inside it.
-- **It must not depend on a terminal.** The popup is a session modal: it takes
-  the whole input stream, so an agent's stray bytes can dismiss it. A WPF window
-  has an ordinary event loop and no such coupling.
+1. The frontend calls `invoke("get_usage", { window })` for the selected
+   `TimeWindow` (`today` / `last7Days` / `last30Days` / `thisMonth`),
+   starting with `today`.
+2. `get_usage` (in `lib.rs`) resolves the three store paths under the
+   user's home directory, loads `pricing.json` if present, and runs the
+   whole read off the main thread (`spawn_blocking`) so a large history
+   never stalls the window.
+3. `usage::collect_usage` calls each reader — `claude::read_usage`,
+   `codex::read_usage`, `opencode::read_usage` — independently. Each
+   returns an `AgentUsageReport` with its own `AgentStatus`
+   (`Ok` / `NotInstalled` / `Error`), so one broken agent store never hides
+   the other two.
+4. Claude and Codex totals are priced through `pricing::estimate_cost`
+   against the built-in table plus any `pricing.json` overrides; OpenCode
+   already carries its own reported cost and skips pricing entirely.
+5. The `UsageSnapshot` — window bounds, per-agent totals, per-project
+   breakdown, an optional `pricingWarning` — serializes back to the
+   frontend, where `usage-view.ts` turns it into the rendered panel.
 
-`hotbar/hotbar.ps1` owns the window; `hotbar/launch-hotbar.ps1` owns the host
-concerns (STA apartment, hidden console, second-instance refusal) so the widget
-itself only ever has to assume it is already on a pumped STA thread.
+## Adding a new agent reader
 
-### Shape, geometry and the clip
+Each reader is self-contained and returns the same shape, so adding one
+does not touch the other two:
 
-The bar is a half-ellipse `72 x 400` produced by an asymmetric
-`CornerRadius="200,0,0,200"`, and the item column is right-aligned and sized
-against the curve:
+1. Add `app/src-tauri/src/usage/<agent>.rs` with a
+   `pub fn read_usage(root: &Path, start: DateTime<Local>, end: DateTime<Local>, ...) -> AgentUsageReport`,
+   returning `AgentUsageReport::not_installed`, `::error`, or `::ok` as
+   appropriate — never invent a status.
+2. Register it in `usage/mod.rs`: a store-root field on `UsagePaths`, a
+   resolution rule in `resolve_paths`, and a call inside `collect_usage`.
+3. If the new agent reports cost per session already, skip pricing for it
+   the way `opencode.rs` does; if it only reports tokens, price it through
+   `pricing::estimate_cost` the way `claude.rs`/`codex.rs` do.
+4. Add the agent to `app/src/usage-view.ts`'s types and rendering, and a
+   default item (`agent-usage:<agent>`) in `config.rs::default_items` if it
+   should get its own cell.
 
-```text
-usable width at row y = 72 * sqrt(1 - ((y - 200) / 200)^2)
-```
+## Adding a custom metric
 
-The content spans `dy 68..332`, where that curve leaves 54 px for a 44 px column.
-The window keeps its **right** edge pinned to the monitor's working area and
-shifts left by the panel width when a panel opens, so the crescent never leaves
-the screen — which is why `BarBorder` carries no `Width`.
+The same reader/command boundary is the extension point for a metric that
+is something other than token usage: write a new Rust module with its own aggregation
+function, expose it as a new `#[tauri::command]` in `lib.rs`, and add a
+frontend view-model module (parallel to `usage-view.ts`) that turns the
+returned JSON into panel lines. Nothing else in `main.ts` needs to change
+beyond wiring the new item's `action` to the new `invoke()` call.
 
-WPF does **not** clip children to `CornerRadius`, so the `ItemsPanel` gets an
-explicit clip in `Update-HotbarBarClip`: a `PathGeometry` (straight right edge +
-half-ellipse arc) rebuilt on `SizeChanged` and at window open. Without it, hover
-glow and open-panel tabs would draw outside the crescent.
+## Cross-platform notes
 
-## The data layer
-
-Every read is:
-
-- **Read-only.** Agent histories are appended to by the agents; the widget only
-  tails/reads. SQLite opens are `-readonly` (`sqlite3.exe`) or
-  `SQLITE_OPEN_READONLY` (`winsqlite3.dll`), and gateway reads are `SELECT`-only.
-- **Bounded.** Each agent panel has a byte budget; when the budget is reached the
-  panel marks the month as partial (`~`) instead of silently showing a false
-  total.
-- **Honest.** A failed read renders `sin datos` / `no disponible` — never an
-  empty panel, and never a guessed number.
-- **Windowless.** External commands (`sqlite3.exe`, `netstat`) run through
-  `Invoke-Native.ps1` with `CreateNoWindow`, so no console host flashes.
-
-### Attribution and money rules
-
-- **Per project.** Open projects come from Herdr's `session.json`. Sessions are
-  attributed by normalized path prefix: a session under a repo's subdirectory
-  counts toward that repo, and buckets below a project path aggregate.
-- **Real vs estimated.** OpenCode records real cost; Claude Code and Codex CLI do
-  not, so their panels multiply session tokens by the official list price in
-  `Get-AgentPricing.ps1` (claude-opus-5-5, gpt-5.6-luna) and mark the result
-  `(est)`. A model outside the table renders `sin datos` — unknown is never
-  invented.
-- **Cache semantics differ per agent.** Claude's `input_tokens` excludes cache, so
-  nothing is subtracted and cached tokens price separately; Codex's
-  `cached_input_tokens` is a subset of `input_tokens`, so it is subtracted and the
-  rest prices as plain input.
-
-### Why personalization lives in the outer layer (anti-breakage contract)
-
-- All runtime configuration stays in **user files**: agent stores under the user
-  profile, `%APPDATA%\herdr\session.json`, `~/.omniroute` data, user config.
-- This repo never writes into a tool's install directory — not into a vendored
-  agent, not into the Herdr binary, not into OmniRoute. Tool updates cannot
-  silently overwrite these files.
-- If an agent changes its store format, the fix lands in `hotbar/lib`, not in a
-  UI rewrite.
-
-## How an agent panel renders
-
-1. `Get-HerdrOpenProjects` reads Herdr's `session.json` (what is open now).
-2. `Get-AgentUsage` scans the agent's store for the month, bounded by the panel
-   budget, and attributes sessions to projects by path prefix.
-3. `Get-AgentPricing` prices tokens where the store has no cost, or reports the
-   real cost where it has one.
-4. The panel paints the title (`agent~ month`), month totals, one line per open
-   project, and the legend lines only when a marker is actually shown.
+- Store paths are resolved relative to the home directory (`dirs::home_dir()`)
+  the same way on every OS; only the per-user config directory differs
+  (`app_config_dir()` from Tauri, which already accounts for the OS
+  convention — `%APPDATA%`, `~/.config`, or `~/Library/Application Support`).
+- SQLite access uses the bundled `rusqlite` (`features = ["bundled"]`), so
+  SQLite is compiled into the binary and needs no system library on any OS.
+- The window is transparent, frameless and always-on-top through Tauri's
+  own window flags (`tauri.conf.json`), which map to the native APIs of
+  each OS without extra code here.
+- Autostart uses `tauri-plugin-autostart`, which registers the native
+  mechanism per platform: a Registry Run entry on Windows, a LaunchAgent on
+  macOS and an XDG autostart `.desktop` entry on Linux. `config.json`'s
+  `autoStart` is the source of truth and is reconciled with the OS entry on
+  every launch; a debug build never registers itself.
+- The webview is WebView2 on Windows, WKWebView on macOS and WebKitGTK 4.1 on
+  Linux.
+- `pricing.json` lives next to `config.json` and is reloaded on every
+  `get_usage` call. The "Open pricing file" menu entry creates it from a
+  template if it is missing and opens it with the opener plugin, which the
+  capabilities file scopes to the app config directory.
 
 ## Components in this repo
 
 | Path | Purpose |
 | --- | --- |
-| `hotbar/hotbar.ps1` | The widget: embedded XAML, always-on-top window, half-moon bar + clip, collapse/expand, agent panels, inline gateway panel, single-instance mutex, `-SelfTest` |
-| `hotbar/launch-hotbar.ps1` | Host launcher: STA apartment, hidden console, second-instance refusal, `-SelfTest` passthrough |
-| `hotbar/config.json` | Items, glyphs (`0xNNNN` code points), labels, tooltips, actions, margin, monitor |
-| `hotbar/lib/Invoke-Native.ps1` | Windowless external-command helper (`CreateNoWindow`) |
-| `hotbar/lib/Get-AgentUsage.ps1` | Agent store readers (claude/codex JSONL, opencode SQLite), month totals, `Get-HerdrOpenProjects`, path-prefix attribution |
-| `hotbar/lib/Get-AgentPricing.ps1` | Official list prices + token→cost estimator; `$null` for unknown models |
-| `hotbar/lib/Read-SqliteQuery.ps1` | Read-only SQLite query: `sqlite3.exe` first, P/Invoke over `winsqlite3.dll` as fallback |
-| `hotbar/lib/Get-OmniRouteStatus.ps1` | `:20128` listening probe |
-| `hotbar/lib/Get-OmniRouteCombos.ps1` | Resolves OmniRoute's `storage.sqlite` and maps the combos table |
-| `herdr-plugin.toml` + `scripts/*.ps1` | **Legacy optional:** OmniRoute plugin — 4 workspace actions, 1 popup, no startup hook |
-| `extensions/omniroute.ts` | **Legacy optional:** pi extension source (deployed to `~/.pi/agent/extensions/`) |
-| `docs/status-panes.md` | Reusable pattern for future status plugins (the legacy popup) |
-| `docs/hotbar.md` | Widget guide: config schema, actions, panels, markers, troubleshooting |
-| `odd/tasks/hotbar-widget.md` | Widget feature tracker (ODD) — source of truth for this iteration |
-| `odd/tasks/omniroute-autofallback.md` | Legacy feature tracker (ODD) — history of the gateway layer |
-
-## Branching
-
-Simple promotion flow, everything converges on `main`:
-
-```
-dev ──► staging ──► main
-```
-
-- `dev` — active development.
-- `staging` — pre-release testing.
-- `main` — stable release; all promoted work lives here.
+| `app/src/main.ts` | Window sizing/positioning, theme application, config load/save, item click handling |
+| `app/src/usage-view.ts` | Usage panel view-model: formatting, window options, per-agent/per-project rendering |
+| `app/src/styles.css` | Bar and panel styling, driven by `--ob-*` custom properties |
+| `app/src-tauri/src/lib.rs` | Tauri commands, window placement, autostart reconciliation |
+| `app/src-tauri/src/config.rs` | Config schema, load/save, theme palettes |
+| `app/src-tauri/src/usage/mod.rs` | `TimeWindow`, `collect_usage`, `UsageSnapshot`, project-path normalization |
+| `app/src-tauri/src/usage/claude.rs` | Claude Code JSONL reader |
+| `app/src-tauri/src/usage/codex.rs` | Codex CLI JSONL reader |
+| `app/src-tauri/src/usage/opencode.rs` | OpenCode SQLite reader |
+| `app/src-tauri/src/usage/pricing.rs` | Built-in price table, `pricing.json` override loading, cost estimation |
+| `extensions/` | Optional Herdr and OmniRoute integrations, see [extensions/README.md](../extensions/README.md) |

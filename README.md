@@ -1,203 +1,196 @@
-# hotbar
+# Orbitbar
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-A small floating, always-on-top Windows bar — an elongated half-moon pinned to the
-right edge of your primary monitor. Click a cell and it expands an inline panel to
-the left: **how much your AI agents actually cost you this month**, per agent and
-per open project, plus one cell with the
-[OmniRoute](https://github.com/montesgp/omniroute) gateway status.
+Orbitbar is a small floating bar that stays on top of your desktop and shows
+the token usage and cost of your local AI coding agents (Claude Code, Codex
+and OpenCode): overall, per project, and for the time window you pick. It
+runs on Windows, macOS and Linux.
 
-It is standalone: it is not a Herdr pane, it works whether or not Herdr is running,
-and it reads only what the agents themselves already wrote to disk.
+> Screenshot: coming soon.
 
-> **Windows v1, honestly.** This is a Windows tool — Windows PowerShell 5.1 and WPF.
-> The cross-platform advance is architectural, not delivered: every data source is
-> read through a small decoupled reader layer (`hotbar/lib/*.ps1`), so a future port
-> swaps readers instead of rewriting the widget. See
-> [docs/architecture.md](docs/architecture.md).
+## What you get
 
-## The hotbar widget
+- **A bar that is always there.** It docks to the right edge of your primary
+  monitor, collapses to a small tab, can be dragged, and opens a usage panel
+  to its left.
+- **Usage per agent and per project.** Output tokens and cost for Today,
+  the last 7 days, the last 30 days or the current month.
+- **Local data only.** Orbitbar reads the session history your agents
+  already keep on disk. It needs no account, sends no telemetry and makes no
+  network calls.
+- **Sourced prices.** A built-in price table with a per-user override file.
+  A model without a price entry shows `no price data`.
+- **Light and dark themes**, switched live from the bar's menu.
+- **One JSON config file** for items, theme, autostart and placement.
+
+## Quick start
+
+Orbitbar is built from source with Node.js and a Rust toolchain. Install the
+prerequisites for your OS (below), then:
+
+```sh
+cd app
+npm install
+npm run tauri build   # installer or app bundle for the current OS
+```
+
+Use `npm run tauri dev` instead to run with hot reload while you work on it.
+
+## Install and run on your OS
+
+Agents are optional: Orbitbar reads whichever of Claude Code, Codex and
+OpenCode are installed and reports the others as not installed. SQLite is
+compiled into the binary, so there is nothing else to install on any OS.
+
+### Windows
+
+| | |
+| --- | --- |
+| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/) with the MSVC toolchain (`rustup default stable-msvc`), and the Visual Studio C++ Build Tools ("Desktop development with C++") |
+| Runtime | WebView2, which ships with Windows 10 and 11 |
+| Artifacts | NSIS installer (`*-setup.exe`) and `.msi` |
+| Config | `%APPDATA%\com.orbitbar.app\config.json` |
+| Autostart | A per-user Registry Run entry |
+
+### macOS
+
+| | |
+| --- | --- |
+| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/), and the Xcode Command Line Tools (`xcode-select --install`) |
+| Runtime | WKWebView, part of macOS |
+| Artifacts | `Orbitbar.app` and a `.dmg` |
+| Config | `~/Library/Application Support/com.orbitbar.app/config.json` |
+| Autostart | A LaunchAgent |
+
+### Linux
+
+| | |
+| --- | --- |
+| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/), and the WebKitGTK 4.1 development packages (see below) |
+| Runtime | WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu) |
+| Artifacts | `.deb`, `.rpm` and `.AppImage` |
+| Config | `~/.config/com.orbitbar.app/config.json` |
+| Autostart | An XDG autostart `.desktop` entry |
+
+On Debian and Ubuntu, install the build dependencies with:
+
+```sh
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+For Fedora, Arch and other distributions use the package list in the
+[Tauri prerequisites guide](https://tauri.app/start/prerequisites/).
+
+### Where the build output goes
+
+`npm run tauri build` writes the installers under
+`app/src-tauri/target/release/bundle/`, in one folder per format
+(`nsis`, `msi`, `dmg`, `macos`, `deb`, `rpm`, `appimage`). Each OS produces
+its own formats; build on the OS you are targeting.
+
+### Platform status
+
+| OS | Status |
+| --- | --- |
+| Windows | Built and tested. |
+| macOS | Supported through Tauri's bundler; CI verification is planned. |
+| Linux | Supported through Tauri's bundler; CI verification is planned. |
+
+## Using Orbitbar
+
+- **Click an agent cell** to open its usage panel. The panel always opens on
+  Today; its selector switches to 7 days, 30 days or this month while the
+  panel is open. Click the same cell again, press Escape, or use the close
+  button to close it.
+- **Right-click the bar** (or the collapsed tab), or **left-click the
+  settings cell**, for the menu: edit `config.json`, open `pricing.json`,
+  collapse or expand, reload the config without a restart, switch between
+  Light and Dark, or quit. Escape or a click outside closes the menu.
+- **Drag the bar** to move it; use the chevron at the top to collapse it to a
+  tab.
+
+A block in the panel looks like this:
 
 ```text
-  ╭──────────╮
-  │        ▸ │   collapsed: a single tab, 46 px
-  ╰──────────╯
+Claude Code                                 Today ▾
+------------------------------------------------------
+output tokens   211,300      cost  ~$53.04 (API-equiv.)
+------------------------------------------------------
+project              output tokens        cost
+my-app                     180,400       ~$45.10
+api-service                 30,900        ~$7.94
 ```
 
-Expanded it is a 72 x 400 vertical half-moon, vertically centred, with the panel
-opening to its left.
+- `~$X (API-equiv.)` marks an estimate: Claude Code and Codex report token
+  counts, and Orbitbar prices them at the provider's public API rate.
+- A plain `$X` is a cost OpenCode reports itself, shown as-is.
+- `no price data` means the model has no entry in the built-in table or your
+  override.
 
-```powershell
-.\hotbar\launch-hotbar.ps1
-```
+## Configuration
 
-That is the whole install. No package manager, no build step, no runtime downloads:
-Windows PowerShell 5.1, WPF and `sqlite3.exe` (with a DLL fallback) are already on
-the box.
+Orbitbar creates `config.json` with defaults on first launch (paths per OS
+above) and rewrites it when you change a setting from the app.
 
-- **Always on top, frameless, no taskbar entry.** `AllowsTransparency`,
-  `WindowStyle=None`, `ShowInTaskbar=false`.
-- **Single instance.** A named mutex refuses a second bar. Force-killing the
-  widget releases an abandoned mutex that the next launch recovers, so a crash
-  never wedges it permanently.
-- **Collapse and expand.** The chevron at the top collapses the bar to a 46 px
-  semicircular tab; the tab expands it again.
-- **Right-click** for a context menu: open the config, reload it, collapse, quit.
-  `Escape` quits too.
-- **DPI-aware.** Screen pixels are converted to WPF device-independent units via
-  `Graphics.FromHwnd(IntPtr.Zero).DpiX`, so the bar lands in the same physical
-  spot on a scaled monitor.
+| Field | Meaning |
+| --- | --- |
+| `theme` | `dark` (default) or `light`. Any other value resolves to `dark`. |
+| `fontSize` | Base font size in pixels. |
+| `monitor` | Monitor to dock on; `primary` by default. |
+| `margin` | Gap in pixels between the bar and the screen edge. |
+| `collapsed` | Whether the bar starts as the small tab. |
+| `autoStart` | Start Orbitbar at login (on by default; release builds only). |
+| `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`. |
 
-## Items and actions
-
-`hotbar/config.json` is the whole configuration. Items are rendered in order and
-each one carries a glyph, a label, a tooltip and an action:
+Item actions:
 
 | Action | What it does |
 | --- | --- |
-| `none` | The cell is a placeholder. It renders and does nothing. |
-| `agent-usage` | Expands the usage panel: the month's totals per agent. |
-| `agent-usage:claude` | Expands the per-agent panel for Claude Code (month + per open project). |
-| `agent-usage:codex` | Same for Codex CLI. |
-| `agent-usage:opencode` | Same for OpenCode. |
-| `omniroute-status` | Expands the inline panel with the gateway snapshot (optional; only if you run OmniRoute). |
-| `edit-config` | Opens `config.json` in the default editor. |
-| `run: <command>` | Runs a command. `.cmd`/`.bat` targets go through `cmd.exe /d /c`; an optional `cwd` is honoured. |
+| `agent-usage` | Opens the usage panel with all three agents. |
+| `agent-usage:claude`, `agent-usage:codex`, `agent-usage:opencode` | Opens the panel for one agent. |
+| `toggle-autostart` | Turns autostart on or off and updates the OS entry. |
+| `edit-config` | Opens the bar's menu at the click; "Edit config" there opens `config.json` in your default editor. |
+| `run:<command>`, `omniroute-status` | Reserved names. A clicked cell shows a placeholder. |
 
-Glyphs are written as `0xNNNN` code points rather than literal characters, so the
-whole tree stays pure ASCII and a wrong glyph is a parse error instead of a
-mojibake surprise:
+If `config.json` cannot be parsed, Orbitbar renames it to
+`config.json.invalid` and starts on the defaults.
 
-```json
-{ "id": "claude", "label": "Claude", "glyph": "0x2733", "action": "agent-usage:claude" }
-```
+### Custom model prices
 
-## What the panels show
+Built-in prices live in `app/src-tauri/src/usage/pricing.rs`, one row per
+model with a source URL and an as-of date. To add or override a model, choose
+"Open pricing file" in the bar's menu, which creates `pricing.json` next to
+`config.json` from a template, or copy
+[`app/pricing.example.json`](app/pricing.example.json) there yourself.
+Matching is by exact model id, then by the longest id prefix, so a dated
+model id still resolves against a shorter entry. The file is reloaded on every
+panel refresh; a malformed `pricing.json` falls back to the built-in table
+with a warning.
 
-### Agent usage — honest money
+## Data sources
 
-Claude Code, Codex CLI and OpenCode each write their session history to disk. The
-widget reads those stores read-only and renders the current month:
-
-```text
-  claude~ sep           codex~ sep            opencode sep
-  mes: out 211,3k       mes: out 37,5k        mes: out 1,6M  $0.00
-        $53.04 (est)         $0.28 (est)
-```
-
-Two markers keep the money honest:
-
-| Marker | Meaning |
-| --- | --- |
-| `~` | The read was **partial** (a bounded read budget was reached). The month shown is a floor, not the total. |
-| `(est)` | The cost is **estimated** from the model's official list prices. |
-
-- **Claude Code and Codex CLI do not record cost.** `(est)` means the widget
-  priced the session tokens at the model's official list price
-  (see [docs/hotbar.md#costo-estimado](docs/hotbar.md#costo-estimado%3A-cuando-es-estimado-y-cuando-real) for the table).
-- **OpenCode records real cost** in its SQLite store, so its panel shows the real
-  number with no `(est)` marker.
-- **A model outside the price table renders `sin datos`** instead of a guessed
-  number. Unknown is never invented.
-- The legend line (`(est) = costo estimado`) appears only when an estimate is
-  actually shown; `~ = lectura parcial` only when a read was partial.
-
-### Per open project
-
-Below the month line, the panel breaks the month down by the projects Herdr has
-open (read from Herdr's own `session.json`). Subject sessions under a repo's path
-count toward that repo; unrelated paths render `sin datos`:
-
-```text
-  incoders-commerce 211,3k
-        $53.04 (est)
-  herdr-omniroute: sin datos
-```
-
-### OmniRoute gateway (optional cell)
-
-The `omniroute-status` cell expands gateway UP/DOWN on `:20128`, the active combo
-and the configured combos, read from the gateway's own SQLite. It is the same
-read-only data path the legacy plugin popup uses. If you do not use OmniRoute,
-drop the cell — the widget does not need it.
-
-## Where the data comes from
-
-The widget **never starts any agent or the OmniRoute CLI**. It reads files the
-agents already wrote:
-
-| Agent | Store | Read |
+| Agent | Location read | Access |
 | --- | --- | --- |
-| Claude Code | `~\.claude\projects\**\*.jsonl` | History + live session, read-only |
-| Codex CLI | `~\.codex\sessions\<date>\*.jsonl` | History + live session, read-only |
-| OpenCode | `~\.local\share\opencode\opencode.db` | SQLite via `sqlite3.exe`, `-readonly`, or `winsqlite3.dll` |
-| Herdr open projects | `%APPDATA%\herdr\session.json` | Which repos get a per-project row |
+| Claude Code | `~/.claude/projects/**/*.jsonl` | Read-only |
+| Codex | `~/.codex/sessions/**/*.jsonl` | Read-only |
+| OpenCode | `~/.local/share/opencode/opencode.db` | Read-only SQLite |
 
-Claude and Codex reads are bounded (a byte budget per panel), so a huge history can
-never freeze the UI — and that is exactly when the `~` partial marker appears.
+`~` is your home directory on every OS. See
+[docs/architecture.md](docs/architecture.md) for how the readers work.
 
-## Self test
+## Extensions
 
-```powershell
-.\hotbar\launch-hotbar.ps1 -SelfTest
-```
+Orbitbar has optional extensions for the Herdr TUI and the
+OmniRoute gateway. They are off by default and add no requirements to the
+bar. See [extensions/README.md](extensions/README.md).
 
-Prints one `HOTBAR_SELFTEST` line per check and returns a real exit code. It
-parses the config, validates every glyph and action, loads the XAML, checks the
-expanded/collapsed/panel geometry against the real screen, reads live agent data,
-shows the window for a few hundred milliseconds and closes it from a
-`DispatcherTimer` with a watchdog behind it. A self-test that cannot fail is
-worthless, so the failure path is exercised too: an unsupported action or a bad
-glyph is reported per item and exits 1.
+## Contributing
 
-Nothing in the widget can hang the caller, and no test leaves a window behind.
-
-## Legacy optional surfaces
-
-This repo also carries the older surfaces around OmniRoute. They stay supported
-but are **optional**: the widget exists precisely because they are confined to a
-terminal/session.
-
-| Surface | What it is | Status |
-| --- | --- | --- |
-| Herdr plugin (`herdr.omniroute`) | Status/start/dashboard actions + an on-demand status popup in the Herdr TUI | Supported, optional |
-| pi extension (`extensions/omniroute.ts`) | `/omniroute` command, footer status, warning on non-2xx | Supported, optional |
-| Status popup | One snapshot of gateway UP/DOWN + combos, painted once, no auto-refresh, closes on `q`/Enter | Supported, optional |
-
-Docs: [docs/hotbar.md](docs/hotbar.md) (widget guide),
-[docs/architecture.md](docs/architecture.md) (layers),
-[docs/status-panes.md](docs/status-panes.md) (the plugin popup pattern).
-
-## Scope and lifetime
-
-- **The bar is per-user and explicit.** It starts when you launch it and lives until
-  you quit it. It is not a Herdr pane, so restoring a Herdr session never spawns it,
-  and Herdr not running has no effect on it.
-- **The widget only reads** agent and gateway data. It never touches a tool install
-  directory, never writes to an agent store, and only rewrites `config.json` when
-  you choose **Edit config** (your editor does it). Tool updates cannot break it.
-- **A broken read renders a visible line** (`sin datos` / `no disponible`), never an
-  empty panel — a failed read must not look like "nothing happened this month".
-
-## Branches
-
-Simple promotion flow — everything converges on `main`:
-
-| Branch | Purpose |
-| --- | --- |
-| `dev` | Active development |
-| `staging` | Pre-release testing |
-| `main` | Stable release |
-
-## Requirements
-
-- Windows
-- Windows PowerShell 5.1 (the widget is WPF and needs STA; the launcher handles it)
-- `sqlite3.exe` on `PATH` for OpenCode and combo data, with a `winsqlite3.dll` fallback if absent
-- OmniRoute reachable at `http://localhost:20128` — only for the optional gateway cell
-- Herdr 0.7.0 or newer — only if you want the legacy plugin surface
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE) © 2026 montesgp
+[MIT](LICENSE)

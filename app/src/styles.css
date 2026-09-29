@@ -1,0 +1,512 @@
+/*
+ * Orbitbar — theme tokens arrive as CSS custom properties set by main.ts from
+ * the Rust ThemePalette (themes are data, never code). The :root block below
+ * is only a fallback so the page is not blank before get_config resolves.
+ *
+ * Geometry here is a fixed specification, not a style opinion: the bar is
+ * 72x400 and the crescent is a 200px radius on the left edge (equivalent to
+ * a `CornerRadius="200,0,0,200"` on a 72x400 border).
+ */
+:root {
+  --ob-bg: #101014;
+  --ob-panel: #3a3a44;
+  --ob-text: #c8c8d4;
+  --ob-text-dim: #8a8a96;
+  --ob-hover-bg: #3a3322;
+  --ob-hover-fg: #e8c46a;
+  --ob-press-bg: #4a3f22;
+  --ob-radius-bar: 22px;
+  --ob-radius-cell: 22px;
+  --ob-radius-handle: 8px;
+  --ob-tab-radius: 23px;
+  --ob-moon-rx: 72px;
+  --ob-moon-ry: 200px;
+  --ob-bar-border: #3a3a44;
+  --ob-grad-top: #232329;
+  --ob-grad-bottom: #101014;
+  --ob-font-size: 10px;
+  --ob-glyph-size: 20px;
+  --ob-cell: 44px;
+  --ob-cell-gap: 4px;
+
+  /* The WPF window asked for Segoe UI and fell back to Arial. On Linux and
+   * macOS that stack either misses or substitutes a metric-incompatible face,
+   * so the glyph pitch drifts. These platform names keep the pitch close
+   * without shipping a webfont (a remote font would break the offline
+   * requirement, and Tauri loads this from disk). */
+  font-family: "Segoe UI", Ubuntu, Cantarell, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: var(--ob-font-size);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  background: transparent !important;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+body {
+  display: flex;
+  align-items: stretch;
+  /* The bar is a fixed-width flex item (see .bar below), never `flex: 1`, so
+   * it must be pushed to the right edge itself instead of relying on a
+   * flex sibling to absorb the leftover space. That leftover space is
+   * exactly where the panel (a real flex sibling, fixed 320px) or the
+   * context menu (a `position: fixed` overlay, NOT a flex sibling) render;
+   * flex-end keeps the bar pinned right in both cases and when neither is
+   * open. */
+  justify-content: flex-end;
+}
+
+/*
+ * The crescent belongs to the bar alone, not to the panel. Unlike the WPF
+ * original's single Border around both Grid columns, `#panel` is now a
+ * sibling card (see index.html) instead of a child: `overflow: hidden`
+ * below clips anything inside `.bar` to its curve, and the panel used to be
+ * that "anything" — its select text and long project paths were clipped
+ * against the ellipse instead of a straight edge.
+ *
+ * The bar is a FIXED 72px (46px collapsed, see body.collapsed .bar below),
+ * never `flex: 1 1 auto`. It used to be flex:1 on the assumption that a
+ * flex sibling (the panel, fixed 0 0 320px, or nothing) always accounts for
+ * the rest of the window's width — true for the panel, but the context
+ * menu is a `position: fixed` overlay that claims no flex space, so with
+ * flex:1 the bar itself stretched to fill the widened window and the
+ * crescent deformed (cells off-center, tab stretched when collapsed). A
+ * fixed width plus `justify-content: flex-end` on body keeps the bar
+ * pixel-identical to its menu-closed shape in every state; any leftover
+ * width is exactly where the panel or the menu card renders.
+ */
+.bar {
+  position: relative;
+  flex: 0 0 72px;
+  width: 72px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  background: linear-gradient(
+    180deg,
+    var(--ob-grad-top),
+    var(--ob-grad-bottom)
+  );
+  border: 1px solid var(--ob-bar-border);
+  border-radius: var(--ob-radius-bar);
+  /* CSS clips children to border-radius; WPF does not. That difference is why
+   * the port drops the PathGeometry clip the WPF build needed. */
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+}
+
+/*
+ * The half-moon. The radii MUST be written as an explicit ellipse, and that
+ * detail is not cosmetic:
+ *
+ * Writing `border-radius: 200px 0 0 200px` looks like the WPF
+ * `CornerRadius="200,0,0,200"`, but CSS rescales every radius when they
+ * overflow an edge. On a 72x400 box the top edge would need 200 of horizontal
+ * radius, so f = 72/200 = 0.36 and the result is a 72px CIRCLE, not a crescent.
+ *
+ * `72px 200px` overflows nothing (72+0 <= 72, 200+200 <= 400) so f stays 1.0
+ * and the left edge is the true half-ellipse the WPF build drew. main.ts sets
+ * these from the window size so the shape can never drift from the geometry.
+ */
+body.moon .bar {
+  border-top-left-radius: var(--ob-moon-rx) var(--ob-moon-ry);
+  border-bottom-left-radius: var(--ob-moon-rx) var(--ob-moon-ry);
+}
+
+/*
+ * The panel: its own rounded rectangular card immediately to the left of
+ * the bar (see index.html and the `.bar` comment above), never clipped by
+ * the bar's crescent curve. A light 12px radius, not the bar's half-ellipse
+ * — the WPF original placed the panel beside the bar as its own shape.
+ */
+.panel {
+  position: relative;
+  flex: 0 0 320px;
+  width: 320px;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 12px;
+  background: var(--ob-panel);
+  border: 1px solid var(--ob-bar-border);
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  /* Firefox/standard thin scrollbar, styled with the bar's own tokens
+   * instead of the default OS scrollbar. The 12px right padding above
+   * already leaves room for the 7px thumb, so scrolled content never sits
+   * under it. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--ob-text-dim) transparent;
+}
+
+/* WebView2/WebKit equivalent of the standard scrollbar-* properties above. */
+.panel::-webkit-scrollbar {
+  width: 7px;
+}
+
+.panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  background: var(--ob-text-dim);
+  border-radius: var(--ob-radius-handle);
+}
+
+.panel::-webkit-scrollbar-thumb:hover {
+  background: var(--ob-hover-fg);
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+/* Visible close control: same-cell click and Escape close the panel too,
+ * this is the third documented way (see main.ts togglePanel/closePanel). */
+.panel-close {
+  position: sticky;
+  top: 0;
+  float: right;
+  width: 22px;
+  height: 22px;
+  margin: -2px -4px 4px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--ob-radius-handle);
+  background: transparent;
+  color: var(--ob-text-dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.panel-close:hover {
+  background: var(--ob-hover-bg);
+  color: var(--ob-hover-fg);
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ob-text);
+  font-size: var(--ob-font-size);
+  line-height: 1.35;
+}
+
+/*
+ * Token-usage panel (agent-usage / agent-usage:<agent>). Layout only — the
+ * numbers and status text come from app/src/usage-view.ts (status, totals,
+ * cost, top projects).
+ */
+.usage-window-row {
+  margin-bottom: 6px;
+}
+
+.usage-window-select {
+  width: 100%;
+  padding: 2px 4px;
+  background: var(--ob-panel);
+  color: var(--ob-text);
+  border: 1px solid var(--ob-bar-border);
+  border-radius: var(--ob-radius-handle);
+  font: inherit;
+  cursor: pointer;
+}
+
+.usage-section {
+  padding: 6px 0;
+  border-top: 1px solid var(--ob-bar-border);
+}
+
+.usage-section:first-of-type {
+  border-top: none;
+}
+
+.usage-agent-name {
+  font-weight: 600;
+  color: var(--ob-hover-fg);
+  margin-bottom: 2px;
+}
+
+.usage-line {
+  color: var(--ob-text);
+}
+
+.usage-line--dim {
+  color: var(--ob-text-dim);
+}
+
+.usage-error {
+  color: var(--ob-hover-fg);
+}
+
+.usage-cost {
+  font-weight: 600;
+}
+
+.usage-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.usage-project-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ob-text-dim);
+}
+
+.usage-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-project-stats {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/*
+ * Right-click context menu — a card styled with the same --ob-* tokens as
+ * .panel, positioned by main.ts (openContextMenu/positionContextMenu) inside
+ * the extra width the window grows for it. `position: fixed` puts it
+ * relative to the window's own content area (there is no browser chrome),
+ * so `left` is just an inset from the window's left edge, not the bar's.
+ */
+.context-menu {
+  position: fixed;
+  left: 6px;
+  width: 158px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--ob-panel);
+  border: 1px solid var(--ob-bar-border);
+  border-radius: var(--ob-radius-handle);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  z-index: 10;
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu-item {
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--ob-radius-handle);
+  background: transparent;
+  color: var(--ob-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.context-menu-item:hover {
+  background: var(--ob-hover-bg);
+  color: var(--ob-hover-fg);
+}
+
+.context-menu-check {
+  display: inline-block;
+  width: 1.2em;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  border: none;
+  /* --ob-bar-border equals --ob-panel in every shipped theme, which would
+   * make the separator invisible against the menu's own background; dim
+   * text keeps it visible without a theme-specific override. */
+  background: var(--ob-text-dim);
+  opacity: 0.35;
+}
+
+/*
+ * The bar column: handle on top, then the cells. The 3px right margin is the
+ * WPF `Margin="0,0,3,0"`, which keeps the glyph column off the flat edge.
+ */
+.bar-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-right: 3px;
+}
+
+.cells {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ob-cell-gap);
+}
+
+/*
+ * Cells are glyph-only circles. The label stays in the DOM for the tooltip and
+ * for screen readers, but it is not painted: the WPF bar showed no text under
+ * the glyph and painting it here would break the silhouette.
+ */
+.cell {
+  width: var(--ob-cell);
+  height: var(--ob-cell);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ob-radius-cell);
+  background: transparent;
+  color: var(--ob-text);
+  font-size: var(--ob-glyph-size);
+  line-height: 1;
+  cursor: pointer;
+  /* WebKit renders symbol glyphs heavier than GDI; nudge to match. */
+  text-shadow: 0 0 0 currentColor;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.cell:hover {
+  background: var(--ob-hover-bg);
+  color: var(--ob-hover-fg);
+}
+
+.cell:active {
+  background: var(--ob-press-bg);
+}
+
+/* An autostart toggle that is currently off. Dimming reads as "disabled"
+   without touching the glyph, which belongs to the user's config. */
+.cell--off {
+  opacity: 0.42;
+}
+
+.cell .glyph {
+  display: block;
+  line-height: 1;
+}
+
+/* Visible to assistive tech and to the title tooltip, never painted. */
+.cell .label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Collapse handle: sits above the cells, points right because collapsing
+ * shrinks the bar toward the screen edge. */
+.collapse {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--ob-radius-handle);
+  background: transparent;
+  color: var(--ob-text-dim);
+  font-size: 24px;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.collapse:hover {
+  background: var(--ob-hover-bg);
+  color: var(--ob-hover-fg);
+}
+
+/*
+ * Collapsed: the whole window is the 46x46 tab, radius 23 on the left. The
+ * chevron flips because expanding grows the bar LEFT into the desktop.
+ */
+body.collapsed .bar {
+  flex-basis: 46px;
+  width: 46px;
+  /* The window grows taller while the context menu is open; the tab must
+   * stay a 46px square centered on the edge instead of stretching with it. */
+  height: 46px;
+  align-self: center;
+  border-radius: var(--ob-tab-radius) 0 0 var(--ob-tab-radius);
+}
+
+body.collapsed .bar-col,
+body.collapsed .panel {
+  display: none;
+}
+
+body.collapsed .tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ob-tab-radius) 0 0 var(--ob-tab-radius);
+  background: transparent;
+  border: none;
+  color: var(--ob-text);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+body.collapsed .tab:hover {
+  background: var(--ob-hover-bg);
+  color: var(--ob-hover-fg);
+}
+
+.tab {
+  display: none;
+}
+
+/* Set by main.ts while the window is being resized for the context menu, so
+ * the intermediate frames (new size, old position) are never shown. The
+ * window itself is transparent, hence nothing is left behind. */
+body.resizing > * {
+  visibility: hidden;
+}
