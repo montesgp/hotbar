@@ -80,7 +80,7 @@ is test-first; the frontend only applies the result.
       them from both the project list and the agent totals. Rule: cwd under the OS temp dir →
       excluded; existing cwd with no repo ancestor → excluded; missing cwd → (a). Same rule for
       Claude, Codex and OpenCode. Test-first (`cargo test`). Docs: README data/usage notes.
-- [ ] **F7 — Flash when choosing a menu entry.** Still present after F5: picking any entry
+- [x] **F7 — Flash when choosing a menu entry.** Still present after F5: picking any entry
       looks like the app closes and reopens. Hypothesis (unconfirmed): `set_bounds` toggles
       `resizable` around every resize (`lib.rs:210,216`), which changes the window style on
       Windows and forces a full frame redraw. Try removing the toggle (e.g. keep the window
@@ -176,6 +176,23 @@ then promote to `main` without a tag unless the user asks for a release.
   `detail` gains "N entries/sessions outside any project not counted". README "Data sources"
   and `docs/architecture.md` updated. Existing Spanish string "sesiones sin cwd atribuible" left
   as is.
+- F7 done (no new pure logic, so no new unit test; existing 145 still green; the effect is
+  visual and unverified here). Investigation (tao 0.37.1, tauri-runtime-wry 2.12.0, Windows):
+  `set_resizable` toggles `WS_SIZEBOX` via `SetWindowLongW` and then `SetWindowPos(...,
+  SWP_FRAMECHANGED)` (window_state.rs `apply_diff`), and tauri-runtime-wry attaches/detaches the
+  undecorated-resize subclass hook on each toggle; `set_bounds` did that twice per placement.
+  tao does not clamp programmatic sizes on Windows (`WM_WINDOWPOSCHANGING` passes through; the
+  min/max constraints only bound user resizing), so the "lock" the old comment described does not
+  apply there. Change: Windows `set_bounds` is now a bare `SetWindowPos` (no toggle, no style
+  change, single native call kept); other platforms keep the toggle (GTK size hints; unverified).
+  Also: new `plan_window` command (same math, applies nothing); the frontend calls it before a
+  grow so `body.side-right` is set before the window grows to the right of the bar (else the bar
+  showed at the far right for a frame). Unneeded resizes: the menu close then the action's own
+  re-render/reload already skip through the request key (unchanged geometry), theme/autostart/
+  examples never place the window; nothing more to remove. `npx tsc --noEmit` clean, `npm run
+  build` ok, `cargo test` 145 passed, clippy clean.
+  User must check on screen: pick each menu entry (no flash), open menu on a bar near the left
+  edge, drag, collapse/expand, panel open/close.
 
 ## Next step
 

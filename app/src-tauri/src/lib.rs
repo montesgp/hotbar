@@ -168,16 +168,28 @@ fn work_rect(monitor: &tauri::Monitor) -> placement::Rect {
 /// Doing it as separate `set_size` / `set_position` calls lets the compositor
 /// show the in-between frame (new size at the old position), which is a visible
 /// jump. On Windows this is one `SetWindowPos`; elsewhere it is `set_size` then
-/// `set_position`, the best the platform API offers.
-/// The window is `resizable: false`, which makes tao lock its min/max size to
-/// the size at that moment and clamp anything else, so `resizable` is toggled
-/// around the call to release and re-take that lock at the new size (a sync
-/// command runs on the main thread, so the three steps are strictly ordered).
-/// `SWP_NOCOPYBITS` is left off on purpose: the webview is a child surface
-/// composed by DWM, so nothing stale is blitted, and discarding the client
-/// bits could itself produce a blank frame.
+/// `set_position`, the best the platform API offers. See `set_bounds` for how
+/// each platform deals with the window being `resizable: false`.
 #[tauri::command]
 fn place_window(window: WebviewWindow, target: PlaceTarget) -> Result<PlaceResult, String> {
+    let result = compute_placement(&window, &target)?;
+    let w = result.placement.window;
+    set_bounds(&window, w.x, w.y, w.width, w.height).map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
+/// The same answer as `place_window` without touching the window. The
+/// frontend asks first so it can put the menu/panel on the right side of the
+/// bar BEFORE the window grows: growing to the right of a bar the page still
+/// draws at the far right would show it jumping for a frame.
+#[tauri::command]
+fn plan_window(window: WebviewWindow, target: PlaceTarget) -> Result<PlaceResult, String> {
+    compute_placement(&window, &target)
+}
+
+/// Picks the monitor the bar is on and runs the pure placement on its work
+/// area.
+fn compute_placement(window: &WebviewWindow, target: &PlaceTarget) -> Result<PlaceResult, String> {
     let monitors = window.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Err("no monitor is available".to_string());
@@ -197,37 +209,48 @@ fn place_window(window: WebviewWindow, target: PlaceTarget) -> Result<PlaceResul
         (target.extra_width, target.extra_height),
         areas[index],
     );
-    let w = placed.window;
-    set_bounds(&window, w.x, w.y, w.width, w.height).map_err(|e| e.to_string())?;
     Ok(PlaceResult { placement: placed, monitor: monitors[index].name().cloned() })
 }
 
+/// Applies position and size to the window in one native call on Windows.
+///
+/// The window is `resizable: false`. On Windows that only means the frame has
+/// no `WS_SIZEBOX` (no resize borders); tao does not clamp programmatic sizes
+/// (`WM_WINDOWPOSCHANGING` passes them through and the min/max constraints
+/// only affect user-driven resizing), so `SetWindowPos` may resize the window
+/// as it is. Toggling `resizable` around the call used to be done here, but in
+/// tao that rewrites the window style (`SetWindowLongW`), forces
+/// `SWP_FRAMECHANGED` (a full non-client recalculation and repaint) and
+/// attaches/detaches tauri's undecorated-resize hook, twice per placement:
+/// the frame flash seen when picking a menu entry.
 #[cfg(windows)]
 fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> tauri::Result<()> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
 
     let hwnd = window.hwnd()?;
-    window.set_resizable(true)?;
     // SAFETY: `hwnd` is the live handle of this window; the call has no
-    // pointer arguments beyond the handle itself.
+    // pointer arguments beyond the handle itself. `SWP_NOCOPYBITS` is left
+    // off on purpose: the webview is a child surface composed by DWM, so
+    // nothing stale is blitted, and discarding the client bits could itself
+    // produce a blank frame.
     let ok = unsafe {
         SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, width as i32, height as i32, SWP_NOZORDER | SWP_NOACTIVATE)
     };
-    let relock = window.set_resizable(false);
     if ok == 0 {
         return Err(std::io::Error::last_os_error().into());
     }
-    relock
+    Ok(())
 }
 
 #[cfg(not(windows))]
 fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> tauri::Result<()> {
     use tauri::{PhysicalPosition, PhysicalSize};
 
-    // Same lock as on Windows: the window is `resizable: false`, so the
-    // toolkit may clamp min/max size to the current size. Release it around the
-    // change and take it again at the new size. There is no single native call
-    // here, so size and position stay two steps.
+    // Unlike Windows, the toolkit here may pin min/max size to the current size
+    // while the window is `resizable: false` (GTK size hints), so release the
+    // lock around the change and take it again at the new size. There is no
+    // single native call here, so size and position stay two steps. Not
+    // verified on these platforms; the Windows path above does not need it.
     window.set_resizable(true)?;
     let moved = window
         .set_size(PhysicalSize::new(width, height))
@@ -335,7 +358,8 @@ pub fn run() {
             get_config_path,
             ensure_pricing_file,
             run_command,
-            place_window
+            place_window,
+            plan_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

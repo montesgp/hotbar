@@ -346,15 +346,22 @@ async function placeNow(cfg: OrbitbarConfig, panelOpen: boolean, menuOpen: boole
   // Re-placing the geometry the window already has still makes the OS repaint
   // it, so an unchanged request is skipped.
   if (requestKey(bar, size, extra) === placementKey) return last;
-  const placed = await invoke<Placement>("place_window", {
-    target: {
-      bar,
-      barWidth: size.width,
-      barHeight: size.height,
-      extraWidth: extra.width,
-      extraHeight: extra.height,
-    },
-  });
+  const target = {
+    bar,
+    barWidth: size.width,
+    barHeight: size.height,
+    extraWidth: extra.width,
+    extraHeight: extra.height,
+  };
+  if (extra.width > 0) {
+    // Growing: put the menu/panel side in place BEFORE the window grows. If the
+    // window grew to the right of a bar the page still draws at the far right,
+    // the bar would jump for a frame. (The vertical offset waits for the
+    // resize: applied earlier it would push the tab out of the small window.)
+    const plan = await invoke<Placement>("plan_window", { target });
+    document.body.classList.toggle("side-right", plan.side === "right");
+  }
+  const placed = await invoke<Placement>("place_window", { target });
   applyLayout(placed);
   placement = placed;
   placementKey = requestKey(placed.bar, size, extra);
