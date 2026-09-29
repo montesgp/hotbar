@@ -1,35 +1,52 @@
 # Extensions
 
-orbitbar's core depends on no external service or program: its base metric is
-token spend per agent (claude/codex/opencode) and per project, read only from
-the agents' own local files. Everything under `extensions/` is optional - the
-core bar, the Tauri app and their tests all work with this directory removed.
+Extensions add optional integrations to Orbitbar. Both are off by default; the
+bar, the app and its tests work the same with or without this directory.
 
-An extension adds a signal from a program the user may not have installed
-(here, the OmniRoute gateway and, through it, Herdr). Core code never imports
-from `extensions/`; the reverse is fine.
+The core code never imports from `extensions/`; extensions may depend on the
+repository (for example its `.env` file).
 
-## extensions/herdr
+| Extension | What it adds | Needs |
+| --- | --- | --- |
+| [`herdr/`](#herdr) | OmniRoute gateway status, start and dashboard actions inside the Herdr TUI | Herdr, PowerShell, an OmniRoute install; currently Windows only |
+| [`omniroute/`](#omniroute) | `/omniroute` command, footer status and post-call warning for the pi coding agent | pi, an OmniRoute install |
 
-The Herdr plugin manifest (`herdr-plugin.toml`) and its action scripts
-(`scripts/`): status, start and dashboard commands for the OmniRoute gateway,
-registered as a plugin inside Herdr. Requires Herdr itself; without it this
-directory is simply never loaded.
+## Shared configuration
 
-**Enable:** install/point Herdr at this repository so it picks up
-`extensions/herdr/herdr-plugin.toml`. The scripts read `OMNIROUTE_NODE` /
-`OMNIROUTE_ENTRY` from a repo-root `.env` (see `.env.example`); without a
-configured `OMNIROUTE_ENTRY` the start action fails with a clear message
-instead of guessing a path.
+Both extensions read their settings from a `.env` file at the repository root.
+Copy [`.env.example`](../.env.example) to `.env` and set:
 
-## extensions/omniroute
+| Variable | Meaning |
+| --- | --- |
+| `OMNIROUTE_NODE` | Path to the Node.js executable that launches the gateway. Defaults to `node` on `PATH`. |
+| `OMNIROUTE_ENTRY` | Path to the OmniRoute CLI entry point (`omniroute.mjs`). Required: the start action reports a clear error when it is missing. |
 
-`omniroute.ts` - a pi (gentle-pi) extension: `/omniroute` slash command,
-footer status, post-call warning. Requires pi; loaded from pi's own
-extensions directory, not from this repo directly. It talks to the OmniRoute
-gateway directly, independent of Herdr.
+`.env` is gitignored.
+
+## Herdr
+
+[`herdr/herdr-plugin.toml`](herdr/herdr-plugin.toml) is a Herdr plugin
+manifest. It registers four actions (status, start gateway, open dashboard,
+open status popup) and one popup pane, each backed by a PowerShell script in
+[`herdr/scripts/`](herdr/scripts). The manifest declares `platforms =
+["windows"]` and `min_herdr_version = "0.7.0"`.
+
+**Enable:**
+
+1. Create `.env` as described above.
+2. Register the `extensions/herdr` folder as a plugin in Herdr, so that Herdr
+   loads `herdr-plugin.toml` from it. Refer to Herdr's own documentation for
+   the plugin registration step.
+3. The actions then appear in Herdr under the "OmniRoute" titles.
+
+Herdr loads the plugin once the folder is registered.
+
+## OmniRoute
+
+[`omniroute/omniroute.ts`](omniroute/omniroute.ts) is an extension for the pi
+coding agent. It adds a `/omniroute` slash command, a footer status and a
+post-call warning, and talks to the OmniRoute gateway directly.
 
 **Enable:** copy or symlink `omniroute.ts` into pi's user extensions
-directory. It resolves the repo root from its own file location, so it keeps
-reading `OMNIROUTE_NODE` / `OMNIROUTE_ENTRY` from this repo's `.env`
-wherever pi loads it from.
+directory. The file resolves the repository root from its own location, so it
+keeps reading this repository's `.env` wherever pi loads it from.

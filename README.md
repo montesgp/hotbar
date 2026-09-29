@@ -1,97 +1,118 @@
-# orbitbar
+# Orbitbar
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-A cross-platform, always-on-top desktop bar that shows what your local AI
-coding agents are actually costing you — per agent, per project, for the time
-window you pick. Built with [Tauri 2](https://tauri.app/) (Rust + TypeScript),
+Orbitbar is a small floating bar that stays on top of your desktop and shows
+the token usage and cost of your local AI coding agents (Claude Code, Codex
+and OpenCode): overall, per project, and for the time window you pick. It
 runs on Windows, macOS and Linux.
 
 > Screenshot: coming soon.
 
-## Why
+## What you get
 
-Claude Code, Codex CLI and OpenCode each keep a local history of every
-session — tokens in, tokens out, which project. That data already exists on
-disk; orbitbar just reads it and turns it into a number you can glance at
-without opening a billing dashboard that doesn't exist for a CLI agent.
-
-## Features
-
-- **Always-on-top crescent.** Docks to the right edge of your primary
+- **A bar that is always there.** It docks to the right edge of your primary
   monitor, collapses to a small tab, can be dragged, and opens a usage panel
-  to the left.
-- **Token usage and cost**, per agent (Claude Code, Codex, OpenCode) and per
-  project, over Today / 7 days / 30 days / This month.
-- **Local only.** Reads local session files. No network calls, no accounts,
-  no telemetry.
-- **Real prices, never invented ones.** A built-in, sourced price table with
-  a per-user override file for models it doesn't know yet; a model with no
-  price entry shows "no price data" instead of a guess.
-- **Configurable.** Theme, items, autostart, usage window, and monitor
-  placement all live in one JSON config file.
+  to its left.
+- **Usage per agent and per project.** Output tokens and cost for Today,
+  the last 7 days, the last 30 days or the current month.
+- **Local data only.** Orbitbar reads the session history your agents
+  already keep on disk. It needs no account, sends no telemetry and makes no
+  network calls.
+- **Sourced prices.** A built-in price table with a per-user override file.
+  A model without a price entry shows `no price data`.
+- **Light and dark themes**, switched live from the bar's menu.
+- **One JSON config file** for items, theme, autostart and placement.
 
-## Quick start (from source)
+## Quick start
 
-Prerequisites: Node.js, a Rust toolchain, and the OS-level webview
-dependencies from the
-[Tauri prerequisites guide](https://tauri.app/start/prerequisites/).
+Orbitbar is built from source with Node.js and a Rust toolchain. Install the
+prerequisites for your OS (below), then:
 
 ```sh
 cd app
 npm install
-npm run tauri dev     # run in development, with hot reload
-npm run tauri build   # produce an installer/binary for the current OS
+npm run tauri build   # installer or app bundle for the current OS
 ```
 
-`npm run tauri build` produces an NSIS installer and an MSI on Windows.
-macOS (`.dmg`/`.app`) and Linux (`.deb`/`.AppImage`) builds are expected to
-work through Tauri's own bundler but have not yet been verified in CI — see
-[Roadmap](#roadmap).
+Use `npm run tauri dev` instead to run with hot reload while you work on it.
 
-## Configuration
+## Install and run on your OS
 
-orbitbar creates a config file with defaults on first launch and rewrites it
-whenever you change a setting from the app:
+Agents are optional: Orbitbar reads whichever of Claude Code, Codex and
+OpenCode are installed and reports the others as not installed. SQLite is
+compiled into the binary, so there is nothing else to install on any OS.
 
-| OS | Path |
+### Windows
+
+| | |
 | --- | --- |
-| Windows | `%APPDATA%\com.orbitbar.app\config.json` |
-| Linux | `~/.config/com.orbitbar.app/config.json` |
-| macOS | `~/Library/Application Support/com.orbitbar.app/config.json` |
+| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/) with the MSVC toolchain (`rustup default stable-msvc`), and the Visual Studio C++ Build Tools ("Desktop development with C++") |
+| Runtime | WebView2, which ships with Windows 10 and 11 |
+| Artifacts | NSIS installer (`*-setup.exe`) and `.msi` |
+| Config | `%APPDATA%\com.orbitbar.app\config.json` |
+| Autostart | A per-user Registry Run entry |
 
-Key fields: `theme` (`light` or `dark`, default `dark`), `fontSize`, `monitor`, `margin`,
-`collapsed`, `autoStart` (on by default), and `items` — the cells rendered on the bar, each with an `id`,
-`glyph`, `label`, `tooltip` and `action`.
+### macOS
 
-The default items open the usage panel per agent, a combined usage view, the
-config editor, and an autostart toggle:
-
-| Action | What it does |
+| | |
 | --- | --- |
-| `agent-usage` | Opens the usage panel with all three agents. |
-| `agent-usage:claude` / `agent-usage:codex` / `agent-usage:opencode` | Opens the panel scoped to one agent. |
-| `toggle-autostart` | Flips the autostart setting and reconciles the OS entry. |
-| `edit-config` | Opens the same menu as a right click, anchored at the click; its "Edit config" entry opens `config.json` in the OS default editor (opener plugin, scoped to the app config dir). |
-| `run:<command>`, `omniroute-status` | Reserved item actions; not yet wired up in the Tauri app (a clicked cell shows a placeholder — see O9 in `odd/tasks/orbitbar-rebrand.md` for `run:<command>`'s open security decision). |
+| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/), and the Xcode Command Line Tools (`xcode-select --install`) |
+| Runtime | WKWebView, part of macOS |
+| Artifacts | `Orbitbar.app` and a `.dmg` |
+| Config | `~/Library/Application Support/com.orbitbar.app/config.json` |
+| Autostart | A LaunchAgent |
 
-A hand-edited config that fails to parse never bricks the bar: the broken
-file is renamed to `config.json.invalid` and the app restarts on defaults.
+### Linux
 
-### Controls
+| | |
+| --- | --- |
+| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/), and the WebKitGTK 4.1 development packages (see below) |
+| Runtime | WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu) |
+| Artifacts | `.deb`, `.rpm` and `.AppImage` |
+| Config | `~/.config/com.orbitbar.app/config.json` |
+| Autostart | An XDG autostart `.desktop` entry |
 
-Right-click the bar (or the collapsed tab), or left-click the settings cell,
-for a menu: edit config.json or open pricing.json in your editor,
-collapse/expand, reload config.json without restarting, switch between the
-Light and Dark theme (applied live and saved), or quit. Escape closes the menu, same as it closes the usage
-panel; clicking outside it closes it too.
+On Debian and Ubuntu, install the build dependencies with:
 
-### Usage panel
+```sh
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
 
-The panel always opens on Today; its selector switches the window while the
-panel is open (the choice is not saved). Totals and a per-project breakdown
-(top projects by output tokens) render below it. A rough text mock of what
-one agent's block looks like:
+For Fedora, Arch and other distributions use the package list in the
+[Tauri prerequisites guide](https://tauri.app/start/prerequisites/).
+
+### Where the build output goes
+
+`npm run tauri build` writes the installers under
+`app/src-tauri/target/release/bundle/`, in one folder per format
+(`nsis`, `msi`, `dmg`, `macos`, `deb`, `rpm`, `appimage`). Each OS produces
+its own formats; build on the OS you are targeting.
+
+### Platform status
+
+| OS | Status |
+| --- | --- |
+| Windows | Built and tested. |
+| macOS | Supported through Tauri's bundler; CI verification is planned. |
+| Linux | Supported through Tauri's bundler; CI verification is planned. |
+
+## Using Orbitbar
+
+- **Click an agent cell** to open its usage panel. The panel always opens on
+  Today; its selector switches to 7 days, 30 days or this month while the
+  panel is open. Click the same cell again, press Escape, or use the close
+  button to close it.
+- **Right-click the bar** (or the collapsed tab), or **left-click the
+  settings cell**, for the menu: edit `config.json`, open `pricing.json`,
+  collapse or expand, reload the config without a restart, switch between
+  Light and Dark, or quit. Escape or a click outside closes the menu.
+- **Drag the bar** to move it; use the chevron at the top to collapse it to a
+  tab.
+
+A block in the panel looks like this:
 
 ```text
 Claude Code                                 Today ▾
@@ -99,59 +120,72 @@ Claude Code                                 Today ▾
 output tokens   211,300      cost  ~$53.04 (API-equiv.)
 ------------------------------------------------------
 project              output tokens        cost
-orbitbar                   180,400       ~$45.10
-some-other-repo             30,900        ~$7.94
+my-app                     180,400       ~$45.10
+api-service                 30,900        ~$7.94
 ```
 
-- `~$X (API-equiv.)` — Claude Code and Codex CLI subscriptions are not
-  billed per token, so their cost is an estimate: real token counts priced
-  at the provider's public API rate.
-- A plain `$X` with no marker — OpenCode reports its own real cost; it is
-  shown as-is.
-- `no price data` — the model has no entry in the price table (built-in or
-  your override) and orbitbar refuses to guess.
+- `~$X (API-equiv.)` marks an estimate: Claude Code and Codex report token
+  counts, and Orbitbar prices them at the provider's public API rate.
+- A plain `$X` is a cost OpenCode reports itself, shown as-is.
+- `no price data` means the model has no entry in the built-in table or your
+  override.
 
-## Pricing and custom models
+## Configuration
+
+Orbitbar creates `config.json` with defaults on first launch (paths per OS
+above) and rewrites it when you change a setting from the app.
+
+| Field | Meaning |
+| --- | --- |
+| `theme` | `dark` (default) or `light`. Any other value resolves to `dark`. |
+| `fontSize` | Base font size in pixels. |
+| `monitor` | Monitor to dock on; `primary` by default. |
+| `margin` | Gap in pixels between the bar and the screen edge. |
+| `collapsed` | Whether the bar starts as the small tab. |
+| `autoStart` | Start Orbitbar at login (on by default; release builds only). |
+| `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`. |
+
+Item actions:
+
+| Action | What it does |
+| --- | --- |
+| `agent-usage` | Opens the usage panel with all three agents. |
+| `agent-usage:claude`, `agent-usage:codex`, `agent-usage:opencode` | Opens the panel for one agent. |
+| `toggle-autostart` | Turns autostart on or off and updates the OS entry. |
+| `edit-config` | Opens the bar's menu at the click; "Edit config" there opens `config.json` in your default editor. |
+| `run:<command>`, `omniroute-status` | Reserved names. A clicked cell shows a placeholder. |
+
+If `config.json` cannot be parsed, Orbitbar renames it to
+`config.json.invalid` and starts on the defaults.
+
+### Custom model prices
 
 Built-in prices live in `app/src-tauri/src/usage/pricing.rs`, one row per
-model with a `source` URL and an `as_of` date. To add or override a model,
-copy [`app/pricing.example.json`](app/pricing.example.json) to
-`pricing.json` next to `config.json` (same directory as the table above).
-Matching is by exact model id, then longest id prefix, so a future dated
-suffix (`claude-opus-5-5-20260926`) still resolves against a shorter entry
-without an edit. The file is reloaded on every panel refresh — no restart
-needed — and a malformed `pricing.json` falls back to the built-in table
-plus a warning, never a crash.
+model with a source URL and an as-of date. To add or override a model, choose
+"Open pricing file" in the bar's menu, which creates `pricing.json` next to
+`config.json` from a template, or copy
+[`app/pricing.example.json`](app/pricing.example.json) there yourself.
+Matching is by exact model id, then by the longest id prefix, so a dated
+model id still resolves against a shorter entry. The file is reloaded on every
+panel refresh; a malformed `pricing.json` falls back to the built-in table
+with a warning.
 
-## Privacy
+## Data sources
 
-orbitbar reads local files only:
-
-| Agent | Source | Access |
+| Agent | Location read | Access |
 | --- | --- | --- |
 | Claude Code | `~/.claude/projects/**/*.jsonl` | Read-only |
-| Codex CLI | `~/.codex/sessions/**/*.jsonl` | Read-only |
+| Codex | `~/.codex/sessions/**/*.jsonl` | Read-only |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Read-only SQLite |
 
-No network requests, no external services, no accounts. See
-[docs/architecture.md](docs/architecture.md) for the exact reader
-implementation.
+`~` is your home directory on every OS. See
+[docs/architecture.md](docs/architecture.md) for how the readers work.
 
 ## Extensions
 
-Everything under [`extensions/`](extensions/README.md) is optional and adds
-signals from programs you may not have installed (the Herdr TUI plugin, the
-OmniRoute gateway integration). The core bar has no dependency on them and
-works with the directory removed. See
-[extensions/README.md](extensions/README.md).
-
-## Roadmap
-
-- Set up CI to build and verify macOS and Linux installers (only the
-  Windows build has been exercised by the author so far; nothing in the
-  codebase is Windows-specific).
-- Distribution through package managers (winget, Homebrew, an AppImage feed)
-  — planned, not yet done. For now, build from source.
+Orbitbar has optional extensions for the Herdr TUI and the
+OmniRoute gateway. They are off by default and add no requirements to the
+bar. See [extensions/README.md](extensions/README.md).
 
 ## Contributing
 
@@ -159,4 +193,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE) © 2026 montesgp
+[MIT](LICENSE)
