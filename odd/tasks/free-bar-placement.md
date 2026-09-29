@@ -113,6 +113,15 @@ then promote to `main` without a tag unless the user asks for a release.
   restart, second launch. No route deviation: one writer, no delegation.
 - F4 done. README (intro, What you get, Using, config table incl. `position`), `docs/architecture.md` (placement, single instance, commands table; removed a stale `body.resizing` claim), `app/README.md` layout. `AGENTS.md` unchanged: no rule changed. Checks re-run: tsc clean, build ok, `cargo test` 135 passed, clippy clean.
 
+- Review (RDD, slice `b98d463..8d6dc8e`, 1224 lines, medium, user granted): **approved**,
+  acknowledged. Non-blocking follow-ups: (W) `applyState` bar reconstruction, drag-persist
+  decision and `rememberBar` are untested frontend state — extract to pure functions when a
+  frontend runner exists; (S) no test for `place_window` monitor fallback (`lib.rs:186-193`);
+  (S) single-instance registration gated on `cfg(desktop)` but the dependency only on
+  windows/macos/linux (`lib.rs:290-291` vs `Cargo.toml`) — align the conditions.
+  Writer open question: should "Reload config" also apply an edited `position`? (startup-only now).
+  Known cosmetic: chevron does not flip in the left half; possible one-frame jump collapsing a
+  left-half bar.
 ## Next step
 
 User: manual GUI checks (see F3), then PR `fix/free-placement` to `dev`.
