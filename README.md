@@ -7,7 +7,9 @@ visible above your other windows. It shows the token usage and cost of your loca
 coding agents (Claude Code, Codex and OpenCode): overall, per project, and
 for the time window you pick. It runs on Windows, macOS and Linux.
 
-> Screenshot: coming soon.
+| Dark | Light |
+| --- | --- |
+| ![Orbitbar in the Dark theme with the usage panel open on 7 days](docs/images/orbitbar-dark.png) | ![Orbitbar in the Light theme with the usage panel open on 7 days](docs/images/orbitbar-light.png) |
 
 ## What you get
 
