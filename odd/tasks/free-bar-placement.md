@@ -92,6 +92,14 @@ epositories\personal`). User decision (option C): **exclude**
       rgba(0,0,0,0.65)` on `.bar`, the panel and the context menu (`styles.css`). Removed all
       three. Route: inline (one file, mechanical). Evidence: `npm run build` ok. Manual, pending:
       Light and Dark over a white window.
+- [ ] **F9 — `panel:` action: show a program's output in the panel.** The `omniroute-status`
+      cell only shows a placeholder: the action was never implemented in the Tauri app (the
+      UP/DOWN + combos view lived in the legacy PowerShell widget). User decision (option B,
+      2026-09-29): no OmniRoute code in the product; add a generic `panel:<program> [args]`
+      action that runs a program without a console window, with a timeout, and shows its
+      stdout (ANSI stripped) in the panel. Reuses the `run:` parsing and validation. The
+      user's own item then points at `extensions/herdr/scripts/status-dashboard.ps1 -Once`.
+      Test-first where logic is pure. Docs: README actions table, `extensions/README.md`.
 Route: one delegated writer for F1–F4 (2+ non-trivial files: `lib.rs`, `config.rs`,
 `main.ts`, `styles.css`, `Cargo.toml`, docs). One work-unit commit per task.
 
@@ -206,4 +214,5 @@ then promote to `main` without a tag unless the user asks for a release.
 
 ## Next step
 
-F6, then F7; then user re-test and PR `fix/free-placement` to `dev`.
+F9; then rebuild the release exe for the user (F7, F8, F9 manual checks) and PR
+`fix/free-placement` to `dev`.
