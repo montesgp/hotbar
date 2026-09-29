@@ -401,6 +401,10 @@ body.moon .bar {
     box-shadow 120ms ease;
 }
 
+.cell[hidden] {
+  display: none;
+}
+
 .cell:hover {
   background: var(--ob-hover-bg);
   color: var(--ob-hover-fg);

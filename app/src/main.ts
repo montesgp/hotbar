@@ -49,6 +49,8 @@ export interface Item {
   glyph: string;
   action: string;
   tooltip: string;
+  /** Demonstration cell: shown only while `showExamples` is on. */
+  example?: boolean;
 }
 
 /** The only two themes; anything else in config.json resolves to dark in Rust. */
@@ -62,6 +64,8 @@ export interface OrbitbarConfig {
   fontSize: number;
   /** Desired autostart state. Rust reconciles the OS entry against it on start. */
   autoStart: boolean;
+  /** Whether items flagged `example` are visible. Off by default. */
+  showExamples: boolean;
   items: Item[];
 }
 
@@ -92,11 +96,11 @@ const PANEL_WIDTH = 320;
  * grows the height, not just the width.
  */
 const CONTEXT_MENU_WIDTH = 170;
-const CONTEXT_MENU_MIN_HEIGHT = 310;
-/** Eight entries plus three separators, sized from `.context-menu`'s own CSS;
+const CONTEXT_MENU_MIN_HEIGHT = 337;
+/** Nine entries plus three separators, sized from `.context-menu`'s own CSS;
  * kept as a constant instead of measured so opening the menu never needs an
  * extra hidden-then-remeasure paint. */
-const CONTEXT_MENU_HEIGHT_ESTIMATE = 283;
+const CONTEXT_MENU_HEIGHT_ESTIMATE = 310;
 
 const win = getCurrentWindow();
 
@@ -168,9 +172,18 @@ export function applyTheme(palette: ThemePalette): void {
  * Cells are glyph-only circles. The label stays in the DOM (tooltip target and
  * accessible name) but is never painted — the WPF bar showed no text and
  * painting it would break the silhouette.
+ *
+ * Example items are always rendered but stay `hidden` until `showExamples` is
+ * on, so toggling them (`applyExamplesVisibility`) is a per-cell attribute
+ * change, not a rebuild.
  */
-export function renderCells(container: HTMLElement, items: Item[]): void {
-  container.replaceChildren();
+export function renderCells(container: HTMLElement, items: Item[], showExamples = false): void {
+  container.replaceChildren(buildCells(items, showExamples));
+}
+
+/** Builds the cells off-DOM, so a caller can swap them in with one call. */
+export function buildCells(items: Item[], showExamples: boolean): DocumentFragment {
+  const fragment = document.createDocumentFragment();
   for (const item of items) {
     const cell = document.createElement("div");
     cell.className = "cell";
@@ -179,6 +192,10 @@ export function renderCells(container: HTMLElement, items: Item[]): void {
     cell.setAttribute("aria-label", item.tooltip || item.label);
     cell.dataset.id = item.id;
     cell.dataset.action = item.action;
+    if (item.example) {
+      cell.dataset.example = "true";
+      cell.hidden = !showExamples;
+    }
     // Keep the native drag region from swallowing the click.
     cell.setAttribute("data-tauri-drag-region", "false");
 
@@ -195,7 +212,15 @@ export function renderCells(container: HTMLElement, items: Item[]): void {
     label.textContent = item.label;
     cell.appendChild(label);
 
-    container.appendChild(cell);
+    fragment.appendChild(cell);
+  }
+  return fragment;
+}
+
+/** Shows or hides every example cell in place. */
+function applyExamplesVisibility(container: HTMLElement, show: boolean): void {
+  for (const cell of container.querySelectorAll<HTMLElement>('.cell[data-example="true"]')) {
+    cell.hidden = !show;
   }
 }
 
@@ -265,6 +290,7 @@ function buildContextMenuActions(
     reloadConfig: () => void | Promise<void>;
     setTheme: (theme: ThemeName) => void | Promise<void>;
     toggleAutostart: () => void | Promise<void>;
+    toggleExamples: () => void | Promise<void>;
     quit: () => void | Promise<void>;
   },
   currentTheme: string,
@@ -284,6 +310,12 @@ function buildContextMenuActions(
       checked: autostartOn,
       kind: "checkbox",
       run: handlers.toggleAutostart,
+    },
+    {
+      label: "Show example action",
+      checked: cfg.showExamples,
+      kind: "checkbox",
+      run: handlers.toggleExamples,
     },
     "separator",
     { label: "Quit Orbitbar", run: handlers.quit },
@@ -764,7 +796,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const cfg = payload.config;
 
     const cells = document.querySelector<HTMLElement>("#cells");
-    if (cells) renderCells(cells, cfg.items);
+    if (cells) renderCells(cells, cfg.items, cfg.showExamples);
 
     let autostartCells = cells ? bindAutostartCells(cells, cfg.items) : new Map<HTMLElement, string>();
     await refreshAutostartUi(autostartCells);
@@ -866,7 +898,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         themeName = fresh.palette.name;
         document.documentElement.style.setProperty("--ob-font-size", `${cfg.fontSize}px`);
         if (cells) {
-          renderCells(cells, cfg.items);
+          renderCells(cells, cfg.items, cfg.showExamples);
           autostartCells = bindAutostartCells(cells, cfg.items);
           await refreshAutostartUi(autostartCells);
         }
@@ -905,6 +937,13 @@ window.addEventListener("DOMContentLoaded", async () => {
       await refreshAutostartUi(autostartCells);
     };
 
+    // Shows or hides the example cells in place and persists the choice.
+    const toggleExamples = async () => {
+      cfg.showExamples = !cfg.showExamples;
+      if (cells) applyExamplesVisibility(cells, cfg.showExamples);
+      await persistConfig(cfg);
+    };
+
     const quit = async () => {
       try {
         await invoke("quit_app");
@@ -916,7 +955,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const contextMenuActions = async () =>
       buildContextMenuActions(
         cfg,
-        { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, toggleAutostart, quit },
+        { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, toggleAutostart, toggleExamples, quit },
         themeName,
         await readAutostart(cfg.autoStart),
       );

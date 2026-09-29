@@ -27,6 +27,9 @@ pub struct AppConfig {
     /// serde default, a config written before this field existed simply gets
     /// true rather than failing to parse.
     pub auto_start: bool,
+    /// Whether items flagged `example` are shown. Off by default: examples
+    /// only demonstrate what a cell can do, they are not part of the user's bar.
+    pub show_examples: bool,
     pub items: Vec<Item>,
 }
 
@@ -39,6 +42,7 @@ impl Default for AppConfig {
             theme: "dark".into(),
             font_size: 10.0,
             auto_start: true,
+            show_examples: false,
             items: default_items(),
         }
     }
@@ -52,6 +56,14 @@ pub struct Item {
     pub glyph: String,
     pub action: String,
     pub tooltip: String,
+    /// Marks a demonstration cell: rendered only while `showExamples` is on.
+    /// Omitted from config.json when false, so the file stays clean.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub example: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Palette of visual tokens for one theme. Themes are data, never code.
@@ -273,6 +285,7 @@ fn default_items() -> Vec<Item> {
             glyph: "0x2733".into(),
             action: "agent-usage:claude".into(),
             tooltip: format!("Claude - month history and per-project ({tooltip})"),
+            example: false,
         },
         Item {
             id: "codex".into(),
@@ -280,6 +293,7 @@ fn default_items() -> Vec<Item> {
             glyph: "0x25CE".into(),
             action: "agent-usage:codex".into(),
             tooltip: format!("Codex - month history and per-project ({tooltip})"),
+            example: false,
         },
         Item {
             id: "opencode".into(),
@@ -287,6 +301,7 @@ fn default_items() -> Vec<Item> {
             glyph: "0x25C8".into(),
             action: "agent-usage:opencode".into(),
             tooltip: format!("Opencode - month history and per-project ({tooltip})"),
+            example: false,
         },
         Item {
             id: "usage".into(),
@@ -294,6 +309,7 @@ fn default_items() -> Vec<Item> {
             glyph: "0x0024".into(),
             action: "agent-usage".into(),
             tooltip: "Live session usage (claude/codex/opencode) - real-time balance".into(),
+            example: false,
         },
         Item {
             id: "github".into(),
@@ -301,7 +317,8 @@ fn default_items() -> Vec<Item> {
             // U+2197 NORTH EAST ARROW: "opens outside the app".
             glyph: "0x2197".into(),
             action: "open:https://github.com/montesgp/orbitbar".into(),
-            tooltip: "Orbitbar on GitHub".into(),
+            tooltip: "Example action - opens Orbitbar on GitHub".into(),
+            example: true,
         },
         Item {
             id: "settings".into(),
@@ -309,6 +326,7 @@ fn default_items() -> Vec<Item> {
             glyph: "0x2699".into(),
             action: "edit-config".into(),
             tooltip: "Orbitbar menu - edit config, theme, quit".into(),
+            example: false,
         },
         Item {
             id: "autostart".into(),
@@ -318,6 +336,7 @@ fn default_items() -> Vec<Item> {
             glyph: "0x23FB".into(),
             action: "toggle-autostart".into(),
             tooltip: "Launch Orbitbar at login".into(),
+            example: false,
         },
     ]
 }
@@ -549,5 +568,48 @@ mod tests {
             );
             assert!(!item.tooltip.is_empty(), "{} needs a tooltip", item.id);
         }
+    }
+
+    /// Examples only demonstrate what cells can do; nobody sees them until
+    /// they opt in, and an old config.json without the key stays opted out.
+    #[test]
+    fn examples_are_hidden_by_default() {
+        assert!(!AppConfig::default().show_examples);
+        let cfg: AppConfig = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert!(!cfg.show_examples, "an old config must not turn examples on");
+    }
+
+    #[test]
+    fn an_explicit_show_examples_true_is_preserved() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"showExamples":true}"#).unwrap();
+        assert!(cfg.show_examples);
+    }
+
+    /// The GitHub cell is the shipped example, and it says so.
+    #[test]
+    fn the_default_github_cell_is_flagged_as_an_example() {
+        let items = default_items();
+        let github = items.iter().find(|i| i.id == "github").expect("github cell");
+        assert!(github.example);
+        assert!(github.tooltip.starts_with("Example action"), "{}", github.tooltip);
+        assert!(items.iter().filter(|i| i.example).count() == 1, "only github is an example");
+    }
+
+    /// An item written before `example` existed must still load, as a normal
+    /// cell, and a normal cell is written back without the key.
+    #[test]
+    fn items_without_example_load_and_serialize_without_it() {
+        let item: Item = serde_json::from_str(
+            r#"{"id":"a","label":"a","glyph":"0x41","action":"none","tooltip":"t"}"#,
+        )
+        .unwrap();
+        assert!(!item.example);
+        assert!(!serde_json::to_string(&item).unwrap().contains("example"));
+        let flagged: Item = serde_json::from_str(
+            r#"{"id":"a","label":"a","glyph":"0x41","action":"none","tooltip":"t","example":true}"#,
+        )
+        .unwrap();
+        assert!(flagged.example);
+        assert!(serde_json::to_string(&flagged).unwrap().contains("\"example\":true"));
     }
 }

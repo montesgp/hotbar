@@ -212,6 +212,18 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   the action only after the close has finished. Route: delegated writer. Check: cargo test,
   clippy, tsc, build; visual check by the user.
 
+- [ ] **O18 — Example action is opt-in** (user, 2026-09-29). The GitHub cell exists only to show
+  that cells can trigger actions: items can be flagged `"example": true`, and a config switch
+  (default off) plus a "Show example action" menu checkbox decide whether example items render.
+  Its label/tooltip says it is an example (e.g. "Example action - opens Orbitbar on GitHub").
+  Docs explain it. Route: delegated writer. Check: cargo test (RED first on default off and
+  example filtering), clippy, tsc, build.
+- [ ] **O19 — Smooth menu, no flashes on any entry** (user, 2026-09-29: every menu entry still
+  flashes "as if the whole component reloads"). Find what re-renders or repaints on each entry
+  (e.g. reloadConfig rebuilding every cell, theme applied by full reload, window resize), make
+  updates in place, and give the menu a short fade/slide open and close (~120-180 ms) so it
+  feels smooth while staying fast. Route: same writer. Check: tsc, build; visual check by user.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").

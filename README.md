@@ -108,7 +108,7 @@ its own formats; build on the OS you are targeting.
 - **Right-click the bar** (or the collapsed tab), or **left-click the
   settings cell**, for the menu: edit `config.json`, open `pricing.json`,
   collapse or expand, reload the config without a restart, switch between
-  Light and Dark, turn **Start with system** on or off, or quit. Escape or a click outside closes the menu.
+  Light and Dark, turn **Start with system** or **Show example action** on or off, or quit. Escape or a click outside closes the menu.
 - **Drag the bar** to move it; use the chevron at the top to collapse it to a
   tab.
 
@@ -143,7 +143,8 @@ above) and rewrites it when you change a setting from the app.
 | `margin` | Gap in pixels between the bar and the screen edge. |
 | `collapsed` | Whether the bar starts as the small tab. |
 | `autoStart` | Start Orbitbar at login (on by default; release builds only). The menu's **Start with system** entry changes it for you: its check mark shows the real OS registration, and selecting it updates the OS entry and this field. |
-| `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`. |
+| `showExamples` | Show the example cells (items flagged `"example": true`). Off by default. The menu's **Show example action** entry changes it for you. |
+| `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`, and optionally `"example": true`. |
 
 Item actions:
 
@@ -176,9 +177,14 @@ only its own window.
 | macOS | `run:open -a Terminal` (`open` is a program on macOS) |
 | Linux | `run:code ~/projects/my-app` (a `~` is not expanded without a shell; use the full path) |
 
-The default bar includes a `github` cell that uses `open:` to open the
-Orbitbar repository. A `config.json` you already have is not rewritten, so add
-the cell there by hand if you want it.
+The default config includes an example cell, `github`, whose action uses
+`open:` to open the Orbitbar repository. It illustrates what a cell can do
+(`open:` a page, `run:` a program) and is hidden by default: items flagged
+`"example": true` appear only while `showExamples` is `true`. Turn it on with
+the menu's **Show example action** entry, or set `"showExamples": true` in
+`config.json`. Flag your own demonstration cells the same way. A `config.json`
+you already have is not rewritten, so add the `github` item there by hand
+(with `"example": true`) if you want it.
 
 If `config.json` cannot be parsed, Orbitbar renames it to
 `config.json.invalid` and starts on the defaults.
