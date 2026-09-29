@@ -239,6 +239,19 @@ async function snapToMonitor(
   size: PhysicalSize,
   margin: number,
 ): Promise<void> {
+  // Re-snapping to the geometry the window already has still makes the OS
+  // repaint it, so an unchanged target is skipped. A drag clears the key
+  // (`enableDrag`), because the user moved the window since the last snap.
+  const key = [
+    monitor.position.x,
+    monitor.position.y,
+    monitor.size.width,
+    monitor.size.height,
+    size.width,
+    size.height,
+    margin,
+  ].join(",");
+  if (key === lastSnapKey) return;
   await invoke("snap_window", {
     target: {
       monitorX: monitor.position.x,
@@ -250,7 +263,11 @@ async function snapToMonitor(
       margin,
     },
   });
+  lastSnapKey = key;
 }
+
+/** Geometry of the last successful `snap_window`, or null when unknown. */
+let lastSnapKey: string | null = null;
 
 /** Resize + reposition the window for the requested collapse/panel state. */
 async function applyState(
@@ -273,6 +290,9 @@ interface ContextMenuAction {
   /** How a checkable entry behaves: "radio" (one of a group, the default) or
    * an independent "checkbox". */
   kind?: "radio" | "checkbox";
+  /** True when the action resizes the window itself, so closing the menu
+   * must not shrink it first (that would be a second, visible resize). */
+  resizesWindow?: boolean;
 }
 
 /**
@@ -299,7 +319,11 @@ function buildContextMenuActions(
   return [
     { label: "Edit config", run: handlers.openConfig },
     { label: "Open pricing file", run: handlers.openPricing },
-    { label: cfg.collapsed ? "Expand" : "Collapse", run: handlers.toggleCollapsed },
+    {
+      label: cfg.collapsed ? "Expand" : "Collapse",
+      run: handlers.toggleCollapsed,
+      resizesWindow: true,
+    },
     { label: "Reload config", run: handlers.reloadConfig },
     "separator",
     { label: "Light", checked: currentTheme === "light", run: () => handlers.setTheme("light") },
@@ -323,13 +347,13 @@ function buildContextMenuActions(
 }
 
 /** Paints the menu card. `onSelect` is awaited before the action runs, so the
- * menu is always fully closed (and the window resized back down) first and no
- * action that re-renders or resizes races the close, whether the action
- * succeeds or fails. */
+ * menu is always fully closed (faded out, window resized back down unless the
+ * action resizes it itself) first and no action that re-renders or resizes
+ * races the close, whether the action succeeds or fails. */
 function renderContextMenu(
   el: HTMLElement,
   actions: (ContextMenuAction | "separator")[],
-  onSelect: () => Promise<void>,
+  onSelect: (resize: boolean) => Promise<void>,
 ): void {
   el.replaceChildren();
   for (const action of actions) {
@@ -359,7 +383,7 @@ function renderContextMenu(
     btn.addEventListener("click", () => {
       void (async () => {
         try {
-          await onSelect();
+          await onSelect(!action.resizesWindow);
         } finally {
           await action.run();
         }
@@ -655,25 +679,77 @@ async function openContextMenu(
   closePanel: () => Promise<void>,
   setMenuOpen: (open: boolean) => void,
   actions: (ContextMenuAction | "separator")[],
-  onSelect: () => Promise<void>,
+  onSelect: (resize: boolean) => Promise<void>,
 ): Promise<void> {
   const menu = contextMenuEl;
   if (!menu) return;
+  // A menu still fading out must finish (and shrink the window) before the
+  // next one grows it.
+  if (menuClosing) await menuClosing;
   await closePanel();
   setMenuOpen(true);
   renderContextMenu(menu, actions, onSelect);
+  // Grow the window while the card is still hidden, then fade it in.
   await applyState(cfg, false, true);
   const size = sizeFor(cfg.collapsed, false, true);
   positionContextMenu(menu, clickY, size.height);
   menu.hidden = false;
+  // Force a style flush so the transition starts from the hidden state.
+  void menu.offsetWidth;
+  menu.classList.add("open");
 }
 
-/** Closes the menu and restores the window to its plain collapsed/expanded
- * size (never back to the panel — closing the menu does not reopen it). */
-async function closeContextMenu(cfg: OrbitbarConfig, setMenuOpen: (open: boolean) => void): Promise<void> {
+/** Fade duration of the menu card; keep in step with `.context-menu` in
+ * styles.css. */
+const MENU_FADE_MS = 150;
+
+/** The close in progress, so overlapping closes (Escape, outside click, a
+ * collapse handler) share one fade and one resize. */
+let menuClosing: Promise<void> | null = null;
+
+/** Fades the card out and resolves once the transition is over (or at once
+ * when the user prefers reduced motion). */
+function fadeOutMenu(menu: HTMLElement): Promise<void> {
+  menu.classList.remove("open");
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const finish = () => {
+      menu.removeEventListener("transitionend", onEnd);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onEnd = (ev: TransitionEvent) => {
+      if (ev.target === menu && ev.propertyName === "opacity") finish();
+    };
+    menu.addEventListener("transitionend", onEnd);
+    // Safety net if the transition never fires (e.g. the window is hidden).
+    const timer = setTimeout(finish, MENU_FADE_MS + 60);
+  });
+}
+
+/** Closes the menu: fade the card out first, only THEN hide it and shrink the
+ * window, so the shrink never shows a half-drawn card. `resize: false` is for
+ * actions that resize the window themselves (collapse/expand). Restores the
+ * plain collapsed/expanded size, never the panel. */
+function closeContextMenu(
+  cfg: OrbitbarConfig,
+  setMenuOpen: (open: boolean) => void,
+  resize = true,
+): Promise<void> {
+  const menu = contextMenuEl;
+  if (menuClosing) return menuClosing;
+  if (!menu || menu.hidden) return Promise.resolve();
   setMenuOpen(false);
-  if (contextMenuEl) contextMenuEl.hidden = true;
-  await applyState(cfg, false, false);
+  menuClosing = (async () => {
+    await fadeOutMenu(menu);
+    menu.hidden = true;
+    if (resize) await applyState(cfg, false, false);
+  })().finally(() => {
+    menuClosing = null;
+  });
+  return menuClosing;
 }
 
 /** Persist the current config object back to disk. */
@@ -704,6 +780,7 @@ function enableDrag(cfg: OrbitbarConfig): void {
     if (target.closest(".tab")) return;
     if (ev.button !== 0) return;
     dragging = true;
+    lastSnapKey = null;
   });
 
   // The OS drives the window during the native drag; when the user releases the
@@ -747,7 +824,7 @@ function applyAutostartUi(cell: HTMLElement, baseTooltip: string, enabled: boole
 /** cell element -> the tooltip the config declared, kept so the state suffix
  * can be recomposed instead of appended twice. Recomputed by `reloadConfig`
  * too, since a reload replaces the cell elements wholesale. */
-function bindAutostartCells(cells: HTMLElement, items: Item[]): Map<HTMLElement, string> {
+function bindAutostartCells(cells: ParentNode, items: Item[]): Map<HTMLElement, string> {
   const map = new Map<HTMLElement, string>();
   for (const item of items) {
     if (item.action !== "toggle-autostart") continue;
@@ -755,6 +832,13 @@ function bindAutostartCells(cells: HTMLElement, items: Item[]): Map<HTMLElement,
     if (cell) map.set(cell, item.tooltip);
   }
   return map;
+}
+
+/** Applies one autostart state to every autostart cell, in place. */
+function paintAutostart(autostartCells: Map<HTMLElement, string>, on: boolean): void {
+  for (const [cell, tooltip] of autostartCells) {
+    applyAutostartUi(cell, tooltip, on);
+  }
 }
 
 /** The real OS registration; `fallback` when it cannot be read. */
@@ -772,10 +856,7 @@ async function readAutostart(fallback: boolean): Promise<boolean> {
 async function refreshAutostartUi(autostartCells: Map<HTMLElement, string>): Promise<void> {
   if (autostartCells.size === 0) return;
   try {
-    const on = await isAutostartEnabled();
-    for (const [cell, tooltip] of autostartCells) {
-      applyAutostartUi(cell, tooltip, on);
-    }
+    paintAutostart(autostartCells, await isAutostartEnabled());
   } catch (err) {
     console.error("orbitbar: could not read autostart state", err);
   }
@@ -831,16 +912,18 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     const toggleCollapsed = async () => {
-      await closeContextMenu(cfg, setMenuOpen);
+      // The close skips its own shrink: the single applyState below lands the
+      // window straight on its final size. The new look is painted first, in
+      // the still-large (right-anchored) window, so the resize hides nothing.
+      await closeContextMenu(cfg, setMenuOpen, false);
       if (cfg.collapsed) {
         cfg.collapsed = false;
         setCollapsedUi(false);
         await applyState(cfg, panelOpen, false);
       } else {
         cfg.collapsed = true;
-        await togglePanel(false);
         setCollapsedUi(true);
-        await applyState(cfg, false, false);
+        await togglePanel(false);
       }
       await persistConfig(cfg);
     };
@@ -889,18 +972,23 @@ window.addEventListener("DOMContentLoaded", async () => {
     // window resize beyond what the new collapsed/monitor/margin call for.
     // `cfg` is mutated in place (not replaced) so every closure that already
     // captured it — togglePanel, openUsagePanel, enableDrag, the context menu
-    // actions — keeps seeing the fresh values without being rebound.
+    // actions — keeps seeing the fresh values without being rebound. The new
+    // cells are built (and their autostart state painted) off-DOM, then swapped
+    // in with one call, so no frame shows a blank or half-updated bar.
     const reloadConfig = async () => {
       try {
         const fresh = await invoke<ConfigPayload>("get_config");
+        const autostartOn = await readAutostart(fresh.config.autoStart);
         Object.assign(cfg, fresh.config);
         applyTheme(fresh.palette);
         themeName = fresh.palette.name;
         document.documentElement.style.setProperty("--ob-font-size", `${cfg.fontSize}px`);
         if (cells) {
-          renderCells(cells, cfg.items, cfg.showExamples);
-          autostartCells = bindAutostartCells(cells, cfg.items);
-          await refreshAutostartUi(autostartCells);
+          const fragment = buildCells(cfg.items, cfg.showExamples);
+          const bound = bindAutostartCells(fragment, cfg.items);
+          paintAutostart(bound, autostartOn);
+          cells.replaceChildren(fragment);
+          autostartCells = bound;
         }
         setCollapsedUi(cfg.collapsed);
         await applyState(cfg, panelOpen, false);
@@ -909,12 +997,18 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
-    // Saves the choice, then reuses reloadConfig to fetch the resolved
-    // palette and apply it live: same path as "Reload config", no restart.
+    // Saves the choice, then fetches the resolved palette and applies it: only
+    // CSS custom properties change. The cells are not rebuilt.
     const setTheme = async (theme: ThemeName) => {
       cfg.theme = theme;
       await persistConfig(cfg);
-      await reloadConfig();
+      try {
+        const fresh = await invoke<ConfigPayload>("get_config");
+        applyTheme(fresh.palette);
+        themeName = fresh.palette.name;
+      } catch (err) {
+        console.error("orbitbar: could not apply theme", err);
+      }
     };
 
     // Flips the OS registration and persists the choice. Shared by the
@@ -933,8 +1027,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         return;
       }
       cfg.autoStart = next;
+      paintAutostart(autostartCells, next);
       await persistConfig(cfg);
-      await refreshAutostartUi(autostartCells);
     };
 
     // Shows or hides the example cells in place and persists the choice.
@@ -969,7 +1063,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         closePanel,
         setMenuOpen,
         await contextMenuActions(),
-        () => closeContextMenu(cfg, setMenuOpen),
+        (resize) => closeContextMenu(cfg, setMenuOpen, resize),
       );
 
     const barEl = document.querySelector<HTMLElement>("#bar");

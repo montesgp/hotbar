@@ -311,6 +311,26 @@ body.moon .bar {
   border-radius: var(--ob-radius-handle);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
   z-index: 10;
+  /* Fade + a short slide out of the bar side. main.ts adds `.open` after the
+   * window has grown and removes it, then waits for the transition, before
+   * the window shrinks. Keep 150ms in step with MENU_FADE_MS. */
+  opacity: 0;
+  transform: translateX(8px);
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.context-menu.open {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-menu {
+    transform: none;
+    transition: none;
+  }
 }
 
 .context-menu[hidden] {
