@@ -36,7 +36,7 @@ impl Default for AppConfig {
             monitor: "primary".into(),
             margin: 8,
             collapsed: false,
-            theme: "classic".into(),
+            theme: "dark".into(),
             font_size: 10.0,
             auto_start: true,
             items: default_items(),
@@ -76,10 +76,14 @@ pub struct ThemePalette {
     pub moon_radius: f64,
 }
 
+/// Written out field by field on purpose: `#[serde(default)]` calls this for
+/// any key a palette omits, so building it from `PALETTE_DARK` would recurse
+/// through the deserializer forever. The `the_default_theme_is_dark` test
+/// keeps it in step with `PALETTE_DARK`.
 impl Default for ThemePalette {
     fn default() -> Self {
         Self {
-            name: "classic".into(),
+            name: "dark".into(),
             background: "#101014".into(),
             panel: "#3A3A44".into(),
             text: "#C8C8D4".into(),
@@ -99,8 +103,10 @@ impl Default for ThemePalette {
     }
 }
 
-const PALETTE_CLASSIC: &str = r##"{
-  "name": "classic",
+/// The original look (formerly named `classic`): the crescent bar in a dark
+/// palette with a gold hover accent.
+const PALETTE_DARK: &str = r##"{
+  "name": "dark",
   "background": "#101014",
   "panel": "#3A3A44",
   "text": "#C8C8D4",
@@ -118,31 +124,35 @@ const PALETTE_CLASSIC: &str = r##"{
   "moonRadius": 200.0
 }"##;
 
-const PALETTE_DARK: &str = r##"{
-  "name": "dark",
-  "background": "#0D0D11",
-  "panel": "#1F1F26",
-  "text": "#E6E6F0",
-  "textDim": "#9A9AA8",
-  "hoverBg": "#2A2A35",
-  "hoverFg": "#FFFFFF",
-  "radiusBar": 12.0,
-  "radiusCell": 12.0,
+/// Same crescent as `PALETTE_DARK`: every shape token is identical and only
+/// the colors change. Text and dim text keep at least 4.5:1 contrast on the
+/// panel, and the hover accent is a dark amber on a pale amber wash.
+const PALETTE_LIGHT: &str = r##"{
+  "name": "light",
+  "background": "#F4F4F8",
+  "panel": "#F0F0F5",
+  "text": "#22222B",
+  "textDim": "#62626F",
+  "hoverBg": "#F2E6C4",
+  "hoverFg": "#8A5A00",
+  "radiusBar": 22.0,
+  "radiusCell": 22.0,
   "radiusHandle": 8.0,
-  "tabRadius": 12.0,
-  "barBorder": "#1F1F26",
-  "gradientTop": "#0D0D11",
-  "gradientBottom": "#0D0D11",
-  "halfMoon": false,
-  "moonRadius": 12.0
+  "tabRadius": 23.0,
+  "barBorder": "#C9C9D6",
+  "gradientTop": "#FFFFFF",
+  "gradientBottom": "#E6E6EE",
+  "halfMoon": true,
+  "moonRadius": 200.0
 }"##;
 
-/// Resolve a theme name ("classic" | "dark" | any future name) to its palette.
-/// Unknown names fall back to classic so a typo never breaks the bar.
+/// Resolve a theme name ("light" | "dark") to its palette. Anything else,
+/// including the retired name "classic" and typos, resolves to dark so an old
+/// or hand-edited config never breaks the bar.
 pub fn palette_for(theme: &str) -> ThemePalette {
     let json = match theme {
-        "dark" => PALETTE_DARK,
-        _ => PALETTE_CLASSIC,
+        "light" => PALETTE_LIGHT,
+        _ => PALETTE_DARK,
     };
     serde_json::from_str(json).expect("embedded palette must parse")
 }
@@ -313,7 +323,7 @@ mod tests {
     /// is invisible until the window paints nothing.
     #[test]
     fn every_embedded_palette_parses() {
-        for theme in ["classic", "dark"] {
+        for theme in ["light", "dark"] {
             let p = palette_for(theme);
             assert_eq!(p.name, theme);
             assert!(!p.background.is_empty());
@@ -321,34 +331,82 @@ mod tests {
         }
     }
 
-    /// A typo in the config theme must never break the bar.
+    /// Only `light` and `dark` exist. The retired name `classic`, a typo and
+    /// an empty string all resolve to dark, so an old config.json keeps its
+    /// look and a typo never breaks the bar.
     #[test]
-    fn unknown_theme_falls_back_to_classic() {
-        assert_eq!(palette_for("clasci").name, "classic");
-        assert_eq!(palette_for("").name, "classic");
+    fn classic_and_unknown_themes_resolve_to_dark() {
+        for name in ["classic", "clasci", ""] {
+            assert_eq!(palette_for(name).name, "dark", "theme {name:?}");
+        }
+    }
+
+    #[test]
+    fn the_default_theme_is_dark() {
+        assert_eq!(AppConfig::default().theme, "dark");
+        let (default, dark) = (ThemePalette::default(), palette_for("dark"));
+        assert_eq!(
+            serde_json::to_value(&default).unwrap(),
+            serde_json::to_value(&dark).unwrap(),
+            "Default must stay identical to PALETTE_DARK"
+        );
+    }
+
+    /// `dark` is the former `classic` palette, value for value: users who had
+    /// `classic` must see no visual change.
+    #[test]
+    fn dark_keeps_the_former_classic_colors() {
+        let p = palette_for("dark");
+        assert_eq!(p.background, "#101014");
+        assert_eq!(p.panel, "#3A3A44");
+        assert_eq!(p.text, "#C8C8D4");
+        assert_eq!(p.text_dim, "#8A8A96");
+        assert_eq!(p.hover_bg, "#3A3322");
+        assert_eq!(p.hover_fg, "#E8C46A");
+        assert_eq!(p.bar_border, "#3A3A44");
+        assert_eq!(p.gradient_top, "#232329");
+        assert_eq!(p.gradient_bottom, "#101014");
+    }
+
+    /// The themes differ only in color: the crescent shape must be identical.
+    #[test]
+    fn light_shares_every_shape_token_with_dark() {
+        let (light, dark) = (palette_for("light"), palette_for("dark"));
+        assert_eq!(light.half_moon, dark.half_moon);
+        assert_eq!(light.moon_radius, dark.moon_radius);
+        assert_eq!(light.radius_bar, dark.radius_bar);
+        assert_eq!(light.radius_cell, dark.radius_cell);
+        assert_eq!(light.radius_handle, dark.radius_handle);
+        assert_eq!(light.tab_radius, dark.tab_radius);
+        assert_ne!(light.background, dark.background);
+        assert_ne!(light.text, dark.text);
     }
 
     /// The crescent only works because the moon radius matches the bar height;
     /// a regression here silently turns the bar into a rounded rectangle.
     #[test]
-    fn classic_moon_geometry_matches_the_bar() {
-        let p = palette_for("classic");
-        assert!(p.half_moon);
-        assert_eq!(p.moon_radius, 200.0, "moon radius is half the 400px bar height");
-        assert_eq!(p.tab_radius, 23.0, "collapsed tab is 46x46, so half is 23");
+    fn moon_geometry_matches_the_bar_in_every_theme() {
+        for theme in ["light", "dark"] {
+            let p = palette_for(theme);
+            assert!(p.half_moon, "{theme}");
+            assert_eq!(p.moon_radius, 200.0, "moon radius is half the 400px bar height");
+            assert_eq!(p.tab_radius, 23.0, "collapsed tab is 46x46, so half is 23");
+        }
     }
 
     /// Cells are 44px circles in the WPF original, not 8px rounded squares.
     #[test]
     fn cell_radius_is_a_circle_not_a_rounded_square() {
-        assert_eq!(palette_for("classic").radius_cell, 22.0);
+        for theme in ["light", "dark"] {
+            assert_eq!(palette_for(theme).radius_cell, 22.0);
+        }
     }
 
     /// A BOM-edited config is a normal thing on Windows: Notepad and
     /// PowerShell 5.1 both add one, and serde_json rejects it at byte 0.
     #[test]
     fn strip_bom_lets_a_bom_edited_config_parse() {
-        let clean = r#"{"monitor":"primary","margin":8,"collapsed":false,"theme":"classic","fontSize":10.0,"items":[]}"#;
+        let clean = r#"{"monitor":"primary","margin":8,"collapsed":false,"theme":"dark","fontSize":10.0,"items":[]}"#;
         let bommed = format!("\u{feff}{clean}");
         assert!(serde_json::from_str::<AppConfig>(clean).is_ok());
         assert!(
@@ -374,7 +432,7 @@ mod tests {
     /// serde default load-bearing.
     #[test]
     fn a_config_without_autostart_migrates_to_true() {
-        let cfg: AppConfig = serde_json::from_str(r#"{"theme":"classic"}"#).unwrap();
+        let cfg: AppConfig = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert!(
             cfg.auto_start,
             "an older config must opt in to autostart, not out of it"
@@ -402,8 +460,8 @@ mod tests {
     #[test]
     fn a_legacy_usage_window_key_is_ignored_on_load() {
         let cfg: AppConfig =
-            serde_json::from_str(r#"{"theme":"classic","usageWindow":"last7Days"}"#).unwrap();
-        assert_eq!(cfg.theme, "classic");
+            serde_json::from_str(r#"{"theme":"dark","usageWindow":"last7Days"}"#).unwrap();
+        assert_eq!(cfg.theme, "dark");
     }
 
     /// "Open pricing file" must always open something useful, so a missing

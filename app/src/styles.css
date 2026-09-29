@@ -336,6 +336,11 @@ body.moon .bar {
   color: var(--ob-hover-fg);
 }
 
+.context-menu-check {
+  display: inline-block;
+  width: 1.2em;
+}
+
 .context-menu-separator {
   height: 1px;
   margin: 4px 2px;

@@ -44,7 +44,7 @@ write:
   "monitor": "primary",
   "margin": 8,
   "collapsed": false,
-  "theme": "classic",
+  "theme": "dark",
   "fontSize": 10.0,
   "autoStart": true,
   "items": [
@@ -53,8 +53,10 @@ write:
 }
 ```
 
-Themes currently shipped: `classic` (the original WPF look) and `dark`. An
-unknown theme name falls back to `classic` so a typo never breaks the bar.
+Themes shipped: `dark` (the default) and `light`. Both use the same crescent
+shape; only the colors differ. You can also switch from the bar's right-click
+menu. Any other name, including the retired `classic`, resolves to `dark` so
+a typo or an old config never breaks the bar.
 
 ## Development
 

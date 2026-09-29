@@ -52,6 +52,9 @@ export interface Item {
   tooltip: string;
 }
 
+/** The only two themes; anything else in config.json resolves to dark in Rust. */
+export type ThemeName = "light" | "dark";
+
 export interface OrbitbarConfig {
   monitor: string;
   margin: number;
@@ -90,11 +93,11 @@ const PANEL_WIDTH = 320;
  * grows the height, not just the width.
  */
 const CONTEXT_MENU_WIDTH = 170;
-const CONTEXT_MENU_MIN_HEIGHT = 210;
-/** Five entries plus one separator, sized from `.context-menu`'s own CSS;
+const CONTEXT_MENU_MIN_HEIGHT = 270;
+/** Seven entries plus two separators, sized from `.context-menu`'s own CSS;
  * kept as a constant instead of measured so opening the menu never needs an
  * extra hidden-then-remeasure paint. */
-const CONTEXT_MENU_HEIGHT_ESTIMATE = 176;
+const CONTEXT_MENU_HEIGHT_ESTIMATE = 246;
 
 const win = getCurrentWindow();
 
@@ -234,11 +237,14 @@ async function applyState(
 interface ContextMenuAction {
   label: string;
   run: () => void | Promise<void>;
+  /** Present only on the theme choices: true marks the one in effect. */
+  checked?: boolean;
 }
 
 /**
  * The fixed entry list, in order. "Collapse"/"Expand" reflects `cfg.collapsed`
- * so the label always matches what the click will actually do.
+ * so the label always matches what the click will actually do, and the theme
+ * choice in effect (`currentTheme`, the resolved palette name) carries a check.
  */
 function buildContextMenuActions(
   cfg: OrbitbarConfig,
@@ -247,14 +253,19 @@ function buildContextMenuActions(
     openPricing: () => void | Promise<void>;
     toggleCollapsed: () => void | Promise<void>;
     reloadConfig: () => void | Promise<void>;
+    setTheme: (theme: ThemeName) => void | Promise<void>;
     quit: () => void | Promise<void>;
   },
+  currentTheme: string,
 ): (ContextMenuAction | "separator")[] {
   return [
     { label: "Open config", run: handlers.openConfig },
     { label: "Open pricing file", run: handlers.openPricing },
     { label: cfg.collapsed ? "Expand" : "Collapse", run: handlers.toggleCollapsed },
     { label: "Reload config", run: handlers.reloadConfig },
+    "separator",
+    { label: "Light", checked: currentTheme === "light", run: () => handlers.setTheme("light") },
+    { label: "Dark", checked: currentTheme === "dark", run: () => handlers.setTheme("dark") },
     "separator",
     { label: "Quit Orbitbar", run: handlers.quit },
   ];
@@ -279,9 +290,20 @@ function renderContextMenu(
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "context-menu-item";
-    btn.setAttribute("role", "menuitem");
     btn.setAttribute("data-tauri-drag-region", "false");
-    btn.textContent = action.label;
+    if (action.checked === undefined) {
+      btn.setAttribute("role", "menuitem");
+      btn.textContent = action.label;
+    } else {
+      // Radio-style entry: the check slot is always present so labels stay
+      // aligned whether or not this one is the current choice.
+      btn.setAttribute("role", "menuitemradio");
+      btn.setAttribute("aria-checked", String(action.checked));
+      const mark = document.createElement("span");
+      mark.className = "context-menu-check";
+      mark.textContent = action.checked ? "✓" : "";
+      btn.append(mark, action.label);
+    }
     btn.addEventListener("click", () => {
       onSelect();
       void action.run();
@@ -658,6 +680,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   try {
     const payload = await invoke<ConfigPayload>("get_config");
     applyTheme(payload.palette);
+    // The resolved palette name ("light" | "dark"), not cfg.theme: a stored
+    // "classic" or a typo resolves to dark in Rust, and the menu's check
+    // must show what is actually painted.
+    let themeName = payload.palette.name;
     document.documentElement.style.setProperty(
       "--ob-font-size",
       `${payload.config.fontSize}px`,
@@ -764,6 +790,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const fresh = await invoke<ConfigPayload>("get_config");
         Object.assign(cfg, fresh.config);
         applyTheme(fresh.palette);
+        themeName = fresh.palette.name;
         document.documentElement.style.setProperty("--ob-font-size", `${cfg.fontSize}px`);
         if (cells) {
           renderCells(cells, cfg.items);
@@ -777,6 +804,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
+    // Saves the choice, then reuses reloadConfig to fetch the resolved
+    // palette and apply it live: same path as "Reload config", no restart.
+    const setTheme = async (theme: ThemeName) => {
+      cfg.theme = theme;
+      await persistConfig(cfg);
+      await reloadConfig();
+    };
+
     const quit = async () => {
       try {
         await invoke("quit_app");
@@ -786,13 +821,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     const contextMenuActions = () =>
-      buildContextMenuActions(cfg, {
-        openConfig,
-        openPricing,
-        toggleCollapsed,
-        reloadConfig,
-        quit,
-      });
+      buildContextMenuActions(
+        cfg,
+        { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, quit },
+        themeName,
+      );
+
 
     const barEl = document.querySelector<HTMLElement>("#bar");
     if (barEl) {

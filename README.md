@@ -60,7 +60,7 @@ whenever you change a setting from the app:
 | Linux | `~/.config/com.orbitbar.app/config.json` |
 | macOS | `~/Library/Application Support/com.orbitbar.app/config.json` |
 
-Key fields: `theme` (`classic` or `dark`), `fontSize`, `monitor`, `margin`,
+Key fields: `theme` (`light` or `dark`, default `dark`), `fontSize`, `monitor`, `margin`,
 `collapsed`, `autoStart` (on by default), and `items` — the cells rendered on the bar, each with an `id`,
 `glyph`, `label`, `tooltip` and `action`.
 
@@ -80,9 +80,9 @@ file is renamed to `config.json.invalid` and the app restarts on defaults.
 
 ### Controls
 
-Right-click the bar (or the collapsed tab) for a menu: open config.json or
-pricing.json in your editor, collapse/expand, reload config.json without
-restarting, or quit. Escape closes the menu, same as it closes the usage
+Right-click the bar (or the collapsed tab) for a menu: open config.json or open pricing.json in your editor,
+collapse/expand, reload config.json without restarting, switch between the
+Light and Dark theme (applied live and saved), or quit. Escape closes the menu, same as it closes the usage
 panel; clicking outside it closes it too.
 
 ### Usage panel
