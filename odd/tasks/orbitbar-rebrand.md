@@ -241,7 +241,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   `npx tauri build --no-bundle` OK. Stale `orbitbar_lib.dll/.lib/.pdb` from older builds stay
   until `cargo clean`.
 
-- [ ] **O21 — Downloadable releases and CI** (implementation done 2026-09-29; release publication pending) (user, 2026-09-29: "que quede todo correcto para
+- [x] **O21 — Downloadable releases and CI** (implementation done 2026-09-29; release publication pending) (user, 2026-09-29: "que quede todo correcto para
   otros devs"; branch `chore/release-workflow`). GitHub Actions: `ci.yml` (PRs and pushes:
   cargo test, clippy, tsc, build on Windows/macOS/Linux) and `release.yml` (tag `v*`:
   tauri-action builds unsigned installers for Windows, macOS and Linux and publishes a GitHub
@@ -457,3 +457,14 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 ## Next step
 
 O21 and O22 are implemented on `chore/release-workflow`. Remaining: push the branch and open the PR to `dev`, get CI green on all three OSes, merge to `main`, tag `v0.1.0` and confirm the three installers on the published release. `run:` is implemented (O15, hardened in O22); the local folder rename stays with the user, after closing sessions.
+
+## Release v0.1.0 (2026-09-29)
+
+Published: https://github.com/montesgp/orbitbar/releases/tag/v0.1.0 (tag on `main` `9e6f394`,
+Release run 36539409116: create draft, Windows, macOS universal, Linux and publish all
+succeeded). Assets: `Orbitbar_0.1.0_x64-setup.exe`, `Orbitbar_0.1.0_x64_en-US.msi`,
+`Orbitbar_0.1.0_universal.dmg`, `Orbitbar_0.1.0_universal.app.tar.gz`,
+`Orbitbar_0.1.0_amd64.AppImage`, `Orbitbar_0.1.0_amd64.deb`, `Orbitbar-0.1.0-1.x86_64.rpm`.
+Delivery: PR #9 and #10 to `dev`, PR #11 `dev` → `main`. CI green on all three OSes. Open
+items: the O22 review follow-ups above; macOS/Linux installers not yet tried on real machines.
+
