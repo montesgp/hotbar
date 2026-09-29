@@ -1,6 +1,6 @@
 [package]
 name = "orbitbar"
-version = "0.1.0"
+version = "0.2.0"
 description = "Floating desktop bar with token usage metrics for local AI coding agents"
 authors = ["Orbitbar contributors"]
 edition = "2021"

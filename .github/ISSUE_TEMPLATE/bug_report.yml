@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in Orbitbar does not work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Redact real token history, API keys and any file paths that include your username before submitting.
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: Include the build number if relevant.
+    validations:
+      required: false
+  - type: input
+    id: orbitbar-version
+    attributes:
+      label: Orbitbar version
+      description: The release you installed, or the commit you built from.
+    validations:
+      required: true
+  - type: dropdown
+    id: agents
+    attributes:
+      label: Agents involved
+      description: Only if the report is about the usage panel.
+      multiple: true
+      options:
+        - Claude Code
+        - Codex
+        - OpenCode
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
