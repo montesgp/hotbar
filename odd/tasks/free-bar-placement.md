@@ -1,6 +1,6 @@
 # Feature: free-bar-placement — the bar stays where you drop it, and one instance only
 
-Status: **in progress** (opened 2026-09-29). Branch `fix/free-placement` (from `dev`, `b98d463`).
+Status: **implemented, manual checks pending** (opened 2026-09-29). Branch `fix/free-placement` (from `dev`, `b98d463`).
 
 ## Objective
 
@@ -66,7 +66,7 @@ is test-first; the frontend only applies the result.
       release persists position without snapping; startup restores the saved position.
       Checks: CI set; manual — bar away from the edge, open menu from right-click and from
       the settings cell, open panel, collapse/expand, near left and right edges, restart.
-- [ ] **F4 — Docs.** README (what you get, using, config fields), `docs/architecture.md`,
+- [x] **F4 — Docs.** README (what you get, using, config fields), `docs/architecture.md`,
       `AGENTS.md` if a rule changed.
 
 Route: one delegated writer for F1–F4 (2+ non-trivial files: `lib.rs`, `config.rs`,
@@ -102,7 +102,7 @@ then promote to `main` without a tag unless the user asks for a release.
   Config: optional `position: {x, y}` (skipped when unset). Collapse/expand anchoring: vertical
   center kept, horizontal edge nearest the monitor edge kept. `snap_window` is kept only until F3
   switches the frontend, so this commit still runs.
-- F3 done. `main.ts`: `applyState` calls `place_window`, reading the bar back from the live window
+- F3 done, commit `88ed6bb`. `main.ts`: `applyState` calls `place_window`, reading the bar back from the live window
   (position + last placement offset) so a drag is never undone; drag release re-places (clamps)
   and persists position + monitor only if the bar moved; collapse/expand persists the re-anchored
   position; startup is restored in Rust (`restore_bar`). `styles.css`: `body.side-right` flips
@@ -111,7 +111,8 @@ then promote to `main` without a tag unless the user asks for a release.
   Manual, pending (cannot run GUI here): bar away from the edge, menu from right-click and from
   the settings cell, panel, collapse/expand, near left and right edges and top/bottom, drag then
   restart, second launch. No route deviation: one writer, no delegation.
+- F4 done. README (intro, What you get, Using, config table incl. `position`), `docs/architecture.md` (placement, single instance, commands table; removed a stale `body.resizing` claim), `app/README.md` layout. `AGENTS.md` unchanged: no rule changed. Checks re-run: tsc clean, build ok, `cargo test` 135 passed, clippy clean.
 
 ## Next step
 
-F4.
+User: manual GUI checks (see F3), then PR `fix/free-placement` to `dev`.

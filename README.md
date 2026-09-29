@@ -2,8 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Orbitbar is a small bar docked to the edge of your screen, always visible
-above your other windows. It shows the token usage and cost of your local AI
+Orbitbar is a small bar that stays where you put it on your screen, always
+visible above your other windows. It shows the token usage and cost of your local AI
 coding agents (Claude Code, Codex and OpenCode): overall, per project, and
 for the time window you pick. It runs on Windows, macOS and Linux.
 
@@ -11,9 +11,10 @@ for the time window you pick. It runs on Windows, macOS and Linux.
 
 ## What you get
 
-- **A bar that is always there.** It docks to the right edge of your primary
-  monitor, collapses to a small tab, can be dragged, and opens a usage panel
-  to its left.
+- **A bar that is always there.** It starts at the right edge of your primary
+  monitor, can be dragged anywhere on any monitor and stays where you drop it,
+  collapses to a small tab, and opens a usage panel and a menu beside it, on
+  whichever side has room. Only one Orbitbar runs at a time.
 - **Usage per agent and per project.** Output tokens and cost for Today,
   the last 7 days, the last 30 days or the current month.
 - **Local data only.** Orbitbar reads the session history your agents
@@ -119,8 +120,13 @@ its own formats; build on the OS you are targeting. See
   settings cell**, for the menu: edit `config.json`, open `pricing.json`,
   collapse or expand, reload the config without a restart, switch between
   Light and Dark, turn **Start with system** or **Show example action** on or off, or quit. Escape or a click outside closes the menu.
-- **Drag the bar** to move it; use the chevron at the top to collapse it to a
-  tab.
+- **Drag the bar** to move it anywhere; it stays where you drop it, keeps
+  inside the monitor's usable area (not under the taskbar) and comes back
+  there after a restart. The panel and the menu open on the bar's left, or on
+  its right when there is no room on the left, and never move the bar. Use the
+  chevron at the top to collapse it to a tab; the tab keeps the bar's place.
+- **Start it again** while it is running and the second launch exits and brings
+  the running bar forward.
 
 A block in the panel looks like this:
 
@@ -149,8 +155,9 @@ Orbitbar creates `config.json` with defaults on first launch (paths per OS in
 | --- | --- |
 | `theme` | `dark` (default) or `light`. Any other value resolves to `dark`. |
 | `fontSize` | Base font size in pixels. |
-| `monitor` | Monitor to dock on; `primary` by default. |
-| `margin` | Gap in pixels between the bar and the screen edge. |
+| `monitor` | Monitor for the first placement, and the one Orbitbar records when you move the bar; `primary` by default. |
+| `margin` | Gap in pixels between the bar and the right screen edge when it is placed at the start (no saved `position`, or a saved one that is off every monitor). |
+| `position` | Where the bar was dropped: `{ "x": 1836, "y": 340 }`, its top-left corner in physical screen pixels (negative on a monitor left of or above the primary). Written when you drag the bar or collapse/expand it; absent until then. Read at startup: a position that is partly off-screen is pulled back in, one that is off every monitor is ignored and the bar goes to the right edge of `monitor`. Delete the field to reset the placement. |
 | `collapsed` | Whether the bar starts as the small tab. |
 | `autoStart` | Start Orbitbar at login (on by default; release builds only). The menu's **Start with system** entry changes it for you: its check mark shows the real OS registration, and selecting it updates the OS entry and this field. |
 | `showExamples` | Show the example cells (items flagged `"example": true`). Off by default. The menu's **Show example action** entry changes it for you. |

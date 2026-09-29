@@ -60,7 +60,8 @@ through Tauri's `invoke()` IPC.
 | --- | --- | --- |
 | Window/UI | `app/src/main.ts`, `app/src/styles.css`, `app/index.html` | Crescent bar geometry, collapse/expand, drag, theme application, item clicks, panel and context-menu toggling |
 | View-model | `app/src/usage-view.ts` | Pure functions that turn a `UsageSnapshot` into rendered lines — no DOM, unit-testable in isolation |
-| Tauri commands | `app/src-tauri/src/lib.rs` | `get_config`, `save_config`, `get_usage`, `get_config_path`, `ensure_pricing_file`, `run_command`, `quit_app`; window placement and autostart reconciliation on launch |
+| Tauri commands | `app/src-tauri/src/lib.rs` | `get_config`, `save_config`, `get_usage`, `get_config_path`, `ensure_pricing_file`, `run_command`, `quit_app`, `place_window`; window placement and autostart reconciliation on launch |
+| Placement | `app/src-tauri/src/placement.rs` | Pure window-placement rules: grow toward the side with room, clamp into the work area, collapse anchoring, restoring a saved position |
 | Launch actions | `app/src-tauri/src/launch.rs` | `run:<program> [args]`: parses the command line (whitespace-separated, double quotes group) and spawns the program directly, with no shell. `open:<url>` is handled in the frontend through the opener plugin, scoped to `http://` and `https://` in `capabilities/default.json` |
 | Config | `app/src-tauri/src/config.rs` | Schema (`AppConfig`), per-OS config dir resolution, load/save, the `dark` and `light` theme palettes |
 | Usage aggregation | `app/src-tauri/src/usage/mod.rs` | `TimeWindow`, `collect_usage`, project-path normalization, the `UsageSnapshot` shape returned to the frontend |
@@ -69,17 +70,34 @@ through Tauri's `invoke()` IPC.
 
 ## Interaction model
 
-- **Usage panel.** Clicking an agent cell opens the panel to the left of the
-  bar, always on the Today window. The window selector inside the panel is a
+- **Usage panel.** Clicking an agent cell opens the panel beside the bar (left
+  by default, right when there is no room on the left), always on the Today
+  window. The window selector inside the panel is a
   session-only choice and is never written to `config.json`. Clicking the same
   cell again, pressing Escape or using the close button closes it.
 - **Context menu.** A right click on the bar (or the collapsed tab), or a left
   click on the settings cell, opens a menu card inside the webview. The window
   grows to make room for it and shrinks back on close; clicking the settings
   cell again, clicking outside the card or pressing Escape closes it. Only one
-  of the panel and the menu is open at a time. While the window is being
-  resized the page is painted invisible (`body.resizing`) so intermediate
-  frames never reach the screen.
+  of the panel and the menu is open at a time. The card is faded in only after
+  the window has grown, and faded out before it shrinks.
+- **Placement.** The bar can sit anywhere, and opening or closing the panel or
+  the menu never moves it on screen. `placement.rs` holds the rules as pure
+  functions over rectangles in physical pixels, unit tested:
+  `place` grows the window left of the bar when there is room, else right, and
+  clamps it (vertically too, which matters for the taller menu on the
+  collapsed tab) into the work area of the monitor the bar is on;
+  `anchor_resize` keeps the bar's vertical center and its horizontal edge
+  nearest the monitor edge when it collapses or expands; `restore_bar` decides
+  where the bar starts (saved position clamped in, else right-center of the
+  configured monitor). The work area is `Monitor::work_area()`, the monitor
+  minus the taskbar. The `place_window` command applies the result in one
+  native operation and returns the window, the bar's offset inside it and the
+  side; the frontend draws the panel/menu on that side (`body.side-right`).
+  Dropping the bar only clamps it into its monitor, then `position` and
+  `monitor` are saved to `config.json`.
+- **One instance.** `tauri-plugin-single-instance` is registered first: a
+  second launch exits and the running instance shows and focuses its window.
 - **Themes.** `dark` (default) and `light` are palettes in `config.rs`; the
   frontend maps them to `--ob-*` CSS custom properties. Choosing a theme in
   the menu saves it and re-applies the palette live. An unknown name resolves
@@ -166,7 +184,8 @@ beyond wiring the new item's `action` to the new `invoke()` call.
 | `app/src/main.ts` | Window sizing/positioning, theme application, config load/save, item click handling |
 | `app/src/usage-view.ts` | Usage panel view-model: formatting, window options, per-agent/per-project rendering |
 | `app/src/styles.css` | Bar and panel styling, driven by `--ob-*` custom properties |
-| `app/src-tauri/src/lib.rs` | Tauri commands, window placement, autostart reconciliation |
+| `app/src-tauri/src/lib.rs` | Tauri commands, applying window placement, autostart reconciliation, single-instance guard |
+| `app/src-tauri/src/placement.rs` | Pure placement rules (unit tested) |
 | `app/src-tauri/src/config.rs` | Config schema, load/save, theme palettes |
 | `app/src-tauri/src/usage/mod.rs` | `TimeWindow`, `collect_usage`, `UsageSnapshot`, project-path normalization |
 | `app/src-tauri/src/usage/claude.rs` | Claude Code JSONL reader |
