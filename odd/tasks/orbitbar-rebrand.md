@@ -175,7 +175,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   the settings cell again closes the menu when open (toggle), opens it when closed; (d) light
   theme hover background a bit stronger amber (slightly, not much). Route: delegated writer.
   Check: cargo test, clippy, tsc, build; visual check by the user.
-- [ ] **O14 — Documentation fully aligned to the product** (user, 2026-09-29): README, app/README,
+- [x] **O14 — Documentation fully aligned to the product** (user, 2026-09-29): README, app/README,
   docs/architecture.md, CONTRIBUTING, extensions/README. Name orbitbar everywhere; cross-platform
   (Windows, macOS, Linux) with install and usage shown per OS; core = bar with agent token
   metrics overall and per project; Herdr and OmniRoute are optional extensions, off by default,
@@ -359,6 +359,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   opens config.json. Same checks as above (no Rust behavior change; tooltip text only). Not
   visually inspected; manual click pending.
 - 2026-09-29: O13 done, commit `a0b7a31`. (a) Root cause: `--ob-press-bg` was set to `hoverFg`, the same color as the glyph while pressed; it is now `color-mix(in srgb, hoverBg 78%, hoverFg)`. (b) Flash: `applyState` resizes and repositions with separate native calls, so the intermediate window (new size, old position, freshly exposed transparent area) was composited; open/close now run inside `withMaskedResize` (`body.resizing > * { visibility: hidden }`, revealed two frames after the card is placed). Inferred from code, not visually observed. (c) The settings cell toggles the menu; the window-level `pointerdown` closer skips that cell so its click does not see a closed menu and reopen it. (d) Light `hoverBg` `#F2E6C4` -> `#F0E0B0`, contrast with `#8A5A00` 4.77 -> 4.51. RED: `light_hover_uses_a_stronger_amber_wash` -> GREEN. Checks: `cargo test` 83/83 (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Visual check pending (user).
+- 2026-09-29: O14 done, commit `5622ce3`. README, app/README, docs/architecture, CONTRIBUTING and extensions/README rewritten: Orbitbar name, core idea up front, per-OS tables (prerequisites, runtime, artifacts, config path, autostart), platform status table, Extensions section only for Herdr/OmniRoute. Verified against code: themes, Today default, menu triggers, pricing.json reload, autostart reconcile, command list. Tauri 2 Linux package names checked via context7. Stale-term grep (hotbar, incoders, montesgp, classic, O9, odd/tasks, C:\Users) clean in tracked docs outside odd/; relative links resolve. Open items: LICENSE and herdr-plugin.toml still carry the author handle; Herdr manifest is Windows-only (PowerShell scripts).
 
 ## Next step
 
