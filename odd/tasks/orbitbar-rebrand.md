@@ -224,7 +224,8 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   updates in place, and give the menu a short fade/slide open and close (~120-180 ms) so it
   feels smooth while staying fast. Route: same writer. Check: tsc, build; visual check by user.
 
-- [ ] **O19b — Menu flash still visible** (user, 2026-09-29, after O17 and O19 on the real
+- [x] **O19b — Menu flash still visible** — accepted as is (user, 2026-09-29: no extra
+  complexity; the separate-window approach was declined). (user, 2026-09-29, after O17 and O19 on the real
   release build: "el pantallazo no se quita"). The atomic `SetWindowPos`, in-place updates
   and fade did not remove it, so resizing the transparent WebView2 window itself is the
   suspect. Proposed next step (pending user decision): render the menu (and later the usage
@@ -239,6 +240,16 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   Tauri CLI. Route: direct inline. Checks: `cargo test` 102/102 (1 ignored), clippy clean,
   `npx tauri build --no-bundle` OK. Stale `orbitbar_lib.dll/.lib/.pdb` from older builds stay
   until `cargo clean`.
+
+- [ ] **O21 — Downloadable releases and CI** (implementation done 2026-09-29; release publication pending) (user, 2026-09-29: "que quede todo correcto para
+  otros devs"; branch `chore/release-workflow`). GitHub Actions: `ci.yml` (PRs and pushes:
+  cargo test, clippy, tsc, build on Windows/macOS/Linux) and `release.yml` (tag `v*`:
+  tauri-action builds unsigned installers for Windows, macOS and Linux and publishes a GitHub
+  Release). README leads with Download per OS (including first-run notes for unsigned
+  installers), build-from-source moves to a contributor section; intro reworded ("docked to the
+  edge of your screen, always visible above your other windows"); CONTRIBUTING documents the
+  release process. Then `v0.1.0` from `main`. Route: delegated writer; release run monitored by
+  the coordinator.
 
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
@@ -427,3 +438,4 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 
 All tasks done except `run:<cmd>` (security decision left to the user) and the local folder
 rename (user, after closing sessions). `dev` promoted to `main` via PR #6 (2026-09-29).
+- 2026-09-29: O21 implementation done on `chore/release-workflow` (commits `ci: add CI and tag-triggered release workflows`, `docs: lead with download and install...`). `ci.yml` (pull_request; push dev/main; Windows, macOS, ubuntu-22.04): checkout@v4, setup-node@v4 (lts, npm cache), dtolnay/rust-toolchain@stable + clippy, Swatinem/rust-cache@v2, Linux deps, `npm ci`, `tsc --noEmit`, `npm run build`, `cargo test`, `cargo clippy -D warnings`. `release.yml` (tags `v*`, workflow_dispatch; `contents: write`): tauri-apps/tauri-action@v1, projectPath app, non-draft release `Orbitbar v__VERSION__`, macOS `--target universal-apple-darwin`, unsigned, no updater plugin. README now leads with Download and install (per-OS files, unsigned first-run notes), build-from-source moved to its own section; CONTRIBUTING documents checks, branch flow and release process. Validation: YAML parses, local cargo test 102 passed (1 ignored), clippy clean, tsc and build OK; workflows not yet run on GitHub. Pending: push branch, PR to dev, CI green, merge to main, tag `v0.1.0` and confirm the release assets.

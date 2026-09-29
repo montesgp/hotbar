@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            platform: windows-latest
+            args: ''
+          - name: macOS (universal)
+            platform: macos-latest
+            args: '--target universal-apple-darwin'
+          - name: Linux
+            platform: ubuntu-22.04
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Both Apple targets are needed for the universal binary.
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      # Installers are unsigned: no signing or updater secrets are configured.
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseName: 'Orbitbar v__VERSION__'
+          releaseBody: |
+            Download the installer for your OS from the assets below. See the
+            [install section of the README](https://github.com/montesgp/orbitbar#download-and-install)
+            for which file to pick.
+
+            These installers are not code-signed, so Windows SmartScreen and macOS
+            Gatekeeper warn on first run. The README explains how to open them.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
