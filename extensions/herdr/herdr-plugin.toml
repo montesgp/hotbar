@@ -1,7 +1,7 @@
 id = "herdr.omniroute"
 name = "OmniRoute Gateway"
 version = "0.6.0"
-description = "Status, start and dashboard for the OmniRoute auto-fallback gateway (localhost:20128). The Orbitbar bar app is standalone and is not registered here."
+description = "Status, start and dashboard for the OmniRoute auto-fallback gateway (localhost:20128)."
 author = "montesgp"
 platforms = ["windows"]
 min_herdr_version = "0.7.0"

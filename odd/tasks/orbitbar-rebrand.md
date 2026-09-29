@@ -155,6 +155,34 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 - [ ] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar` (after the folder
       rename; verify the supported mechanism first).
 
+- [x] **O10 — Settings cell left-click opens the menu** (user, 2026-09-29): left click on the
+  settings (`edit-config`) cell opens the same menu right-click opens today (Edit config,
+  Open pricing, Reload config, Quit...); "Edit config" stays reachable from that menu.
+  Route: delegated writer (main.ts + docs). Check: tsc, build, manual click.
+- [x] **O11 — Usage panel always opens on Today** (user, 2026-09-29: faster first view). The
+  window selector changes the window only while the panel is open; `usageWindow` is no longer
+  persisted/honored. Route: delegated writer (config.rs, usage/mod.rs, main.ts). Check:
+  cargo test (RED first on the default), tsc.
+- [x] **O12 — Themes: only `light` and `dark`** (user, 2026-09-29). `dark` = former `classic`
+  palette; new `light` palette with the SAME half-moon shape (only colors change); the flat
+  `dark` and the name `classic` are removed; a stored `"classic"` (or any unknown) resolves to
+  `dark`; default `dark`. Settings menu gets a Light / Dark choice that persists and applies
+  live. Route: delegated writer (config.rs, main.ts, styles.css, docs). Check: cargo test (RED
+  first), clippy, tsc, build.
+
+- [x] **O13 — Bar interaction polish** (user, 2026-09-29): (a) pressing a cell no longer
+  hides its glyph (`:active` painted bg = hoverFg); (b) no flash when the menu opens; (c) clicking
+  the settings cell again closes the menu when open (toggle), opens it when closed; (d) light
+  theme hover background a bit stronger amber (slightly, not much). Route: delegated writer.
+  Check: cargo test, clippy, tsc, build; visual check by the user.
+- [x] **O14 — Documentation fully aligned to the product** (user, 2026-09-29): README, app/README,
+  docs/architecture.md, CONTRIBUTING, extensions/README. Name orbitbar everywhere; cross-platform
+  (Windows, macOS, Linux) with install and usage shown per OS; core = bar with agent token
+  metrics overall and per project; Herdr and OmniRoute are optional extensions, off by default,
+  documented only in an Extensions section; say what the product is, never what it is not; no
+  personal/org names (generic examples); requirements accurate (SQLite is bundled, no system
+  dependency). Route: delegated writer. Check: grep for stale terms, link check by readback.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
@@ -302,6 +330,36 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   the click, or WebView2 does not register the hit-test; the window resize after a menu
   open/close is also asynchronous and needs ~1-2s before `GetWindowRect` reflects it, not the
   ~700ms that was tried first.
+- 2026-09-29: O11 done, commit `9f58a02`. `usageWindow` removed from `AppConfig` (serde ignores
+  unknown keys, so old config.json files still load: test `a_legacy_usage_window_key_is_ignored_on_load`);
+  `TimeWindow` default is `Today`; the selector is a session-only variable in main.ts, reset to
+  Today when the panel opens from closed (switching agents while open keeps the selection).
+  RED: `usage::tests::default_window_is_today` (left ThisMonth != Today) and
+  `config::tests::usage_window_is_not_persisted` (key present in serialized config) → GREEN.
+  Checks: `cargo test` 79/79 (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean,
+  `npm run build` OK. Not visually inspected.
+- 2026-09-29: O12 done, commit `38624de`. Themes are `dark` (former `classic`, values unchanged)
+  and `light` (same shape tokens; colors bg `#F4F4F8`, panel `#F0F0F5`, text `#22222B`, textDim
+  `#62626F`, hoverBg `#F2E6C4`, hoverFg `#8A5A00`, barBorder `#C9C9D6`, gradient `#FFFFFF` ->
+  `#E6E6EE`). The flat dark palette and the name `classic` are gone from code and docs (a
+  stored `classic`/unknown resolves to `dark`); default `dark`. The menu has Light / Dark
+  entries with a check on the resolved palette name; selecting saves and reuses `reloadConfig`
+  to apply live. CSS already reads every color from `--ob-*` tokens; only the `rgba(0,0,0,.65)`
+  box-shadows stay fixed (neutral). Menu height constants raised (246 / 270 collapsed).
+  RED: 7 tests failed (`classic_and_unknown_themes_resolve_to_dark`,
+  `dark_keeps_the_former_classic_colors`, `light_shares_every_shape_token_with_dark`,
+  `the_default_theme_is_dark`, `every_embedded_palette_parses`,
+  `moon_geometry_matches_the_bar_in_every_theme`, `cell_radius_is_a_circle_not_a_rounded_square`)
+  -> GREEN. Refactor caught a real bug: building `ThemePalette::default()` from the embedded
+  JSON recursed through serde's container default (stack overflow), so `Default` stays literal
+  and a test pins it to `PALETTE_DARK`. Checks: `cargo test` 82/82 (1 ignored), clippy
+  `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Not visually inspected.
+- 2026-09-29: O10 done, commit `4b7fb14`. Left click on the `edit-config` cell calls the same `showContextMenu`
+  the right click uses, anchored at the click; the entry is now labeled "Edit config" and still
+  opens config.json. Same checks as above (no Rust behavior change; tooltip text only). Not
+  visually inspected; manual click pending.
+- 2026-09-29: O13 done, commit `a0b7a31`. (a) Root cause: `--ob-press-bg` was set to `hoverFg`, the same color as the glyph while pressed; it is now `color-mix(in srgb, hoverBg 78%, hoverFg)`. (b) Flash: `applyState` resizes and repositions with separate native calls, so the intermediate window (new size, old position, freshly exposed transparent area) was composited; open/close now run inside `withMaskedResize` (`body.resizing > * { visibility: hidden }`, revealed two frames after the card is placed). Inferred from code, not visually observed. (c) The settings cell toggles the menu; the window-level `pointerdown` closer skips that cell so its click does not see a closed menu and reopen it. (d) Light `hoverBg` `#F2E6C4` -> `#F0E0B0`, contrast with `#8A5A00` 4.77 -> 4.51. RED: `light_hover_uses_a_stronger_amber_wash` -> GREEN. Checks: `cargo test` 83/83 (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Visual check pending (user).
+- 2026-09-29: O14 done, commit `5622ce3`. README, app/README, docs/architecture, CONTRIBUTING and extensions/README rewritten: Orbitbar name, core idea up front, per-OS tables (prerequisites, runtime, artifacts, config path, autostart), platform status table, Extensions section only for Herdr/OmniRoute. Verified against code: themes, Today default, menu triggers, pricing.json reload, autostart reconcile, command list. Tauri 2 Linux package names checked via context7. Stale-term grep (hotbar, incoders, montesgp, classic, O9, odd/tasks, C:\Users) clean in tracked docs outside odd/; relative links resolve. Open items: LICENSE and herdr-plugin.toml still carry the author handle; Herdr manifest is Windows-only (PowerShell scripts).
 
 ## Next step
 

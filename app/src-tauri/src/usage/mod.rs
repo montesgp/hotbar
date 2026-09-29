@@ -18,15 +18,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// The time window a snapshot is computed over. `ThisMonth` is the default,
-/// the month-to-date view most useful at a glance.
+/// The time window a snapshot is computed over. `Today` is the default: the
+/// usage panel always opens on it (the selector is never persisted) because
+/// it is the fastest view to compute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum TimeWindow {
+    #[default]
     Today,
     Last7Days,
     Last30Days,
-    #[default]
     ThisMonth,
 }
 
@@ -448,8 +449,8 @@ mod tests {
     }
 
     #[test]
-    fn default_window_is_this_month() {
-        assert_eq!(TimeWindow::default(), TimeWindow::ThisMonth);
+    fn default_window_is_today() {
+        assert_eq!(TimeWindow::default(), TimeWindow::Today);
     }
 
     #[test]

@@ -52,6 +52,9 @@ export interface Item {
   tooltip: string;
 }
 
+/** The only two themes; anything else in config.json resolves to dark in Rust. */
+export type ThemeName = "light" | "dark";
+
 export interface OrbitbarConfig {
   monitor: string;
   margin: number;
@@ -60,8 +63,6 @@ export interface OrbitbarConfig {
   fontSize: number;
   /** Desired autostart state. Rust reconciles the OS entry against it on start. */
   autoStart: boolean;
-  /** Persisted usage-panel window selector (Today | 7 days | 30 days | This month). */
-  usageWindow: TimeWindow;
   items: Item[];
 }
 
@@ -92,11 +93,11 @@ const PANEL_WIDTH = 320;
  * grows the height, not just the width.
  */
 const CONTEXT_MENU_WIDTH = 170;
-const CONTEXT_MENU_MIN_HEIGHT = 210;
-/** Five entries plus one separator, sized from `.context-menu`'s own CSS;
+const CONTEXT_MENU_MIN_HEIGHT = 270;
+/** Seven entries plus two separators, sized from `.context-menu`'s own CSS;
  * kept as a constant instead of measured so opening the menu never needs an
  * extra hidden-then-remeasure paint. */
-const CONTEXT_MENU_HEIGHT_ESTIMATE = 176;
+const CONTEXT_MENU_HEIGHT_ESTIMATE = 246;
 
 const win = getCurrentWindow();
 
@@ -136,7 +137,13 @@ export function applyTheme(palette: ThemePalette): void {
   root.style.setProperty("--ob-text-dim", palette.textDim);
   root.style.setProperty("--ob-hover-bg", palette.hoverBg);
   root.style.setProperty("--ob-hover-fg", palette.hoverFg);
-  root.style.setProperty("--ob-press-bg", palette.hoverFg);
+  // Pressed = the hover wash pulled toward the hover foreground. It must stay
+  // clearly different from the foreground itself, or the glyph disappears
+  // while the button is held.
+  root.style.setProperty(
+    "--ob-press-bg",
+    `color-mix(in srgb, ${palette.hoverBg} 78%, ${palette.hoverFg})`,
+  );
   root.style.setProperty("--ob-radius-cell", `${palette.radiusCell}px`);
   root.style.setProperty("--ob-radius-handle", `${palette.radiusHandle}px`);
   root.style.setProperty("--ob-tab-radius", `${palette.tabRadius}px`);
@@ -236,11 +243,14 @@ async function applyState(
 interface ContextMenuAction {
   label: string;
   run: () => void | Promise<void>;
+  /** Present only on the theme choices: true marks the one in effect. */
+  checked?: boolean;
 }
 
 /**
  * The fixed entry list, in order. "Collapse"/"Expand" reflects `cfg.collapsed`
- * so the label always matches what the click will actually do.
+ * so the label always matches what the click will actually do, and the theme
+ * choice in effect (`currentTheme`, the resolved palette name) carries a check.
  */
 function buildContextMenuActions(
   cfg: OrbitbarConfig,
@@ -249,14 +259,19 @@ function buildContextMenuActions(
     openPricing: () => void | Promise<void>;
     toggleCollapsed: () => void | Promise<void>;
     reloadConfig: () => void | Promise<void>;
+    setTheme: (theme: ThemeName) => void | Promise<void>;
     quit: () => void | Promise<void>;
   },
+  currentTheme: string,
 ): (ContextMenuAction | "separator")[] {
   return [
-    { label: "Open config", run: handlers.openConfig },
+    { label: "Edit config", run: handlers.openConfig },
     { label: "Open pricing file", run: handlers.openPricing },
     { label: cfg.collapsed ? "Expand" : "Collapse", run: handlers.toggleCollapsed },
     { label: "Reload config", run: handlers.reloadConfig },
+    "separator",
+    { label: "Light", checked: currentTheme === "light", run: () => handlers.setTheme("light") },
+    { label: "Dark", checked: currentTheme === "dark", run: () => handlers.setTheme("dark") },
     "separator",
     { label: "Quit Orbitbar", run: handlers.quit },
   ];
@@ -281,9 +296,20 @@ function renderContextMenu(
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "context-menu-item";
-    btn.setAttribute("role", "menuitem");
     btn.setAttribute("data-tauri-drag-region", "false");
-    btn.textContent = action.label;
+    if (action.checked === undefined) {
+      btn.setAttribute("role", "menuitem");
+      btn.textContent = action.label;
+    } else {
+      // Radio-style entry: the check slot is always present so labels stay
+      // aligned whether or not this one is the current choice.
+      btn.setAttribute("role", "menuitemradio");
+      btn.setAttribute("aria-checked", String(action.checked));
+      const mark = document.createElement("span");
+      mark.className = "context-menu-check";
+      mark.textContent = action.checked ? "✓" : "";
+      btn.append(mark, action.label);
+    }
     btn.addEventListener("click", () => {
       onSelect();
       void action.run();
@@ -302,7 +328,7 @@ function positionContextMenu(el: HTMLElement, clickY: number, windowHeight: numb
 }
 
 /** The shared fallback for an item action that has no real behavior yet
- * (`run:<cmd>`, and — until wired — the context menu's Open config / Open
+ * (`run:<cmd>`, and — until wired — the context menu's Edit config / Open
  * pricing entries): show which id/action fired inside the panel instead of
  * doing nothing, so the wiring can be inspected before it lands. */
 async function showActionPlaceholder(
@@ -343,6 +369,9 @@ function setPanelUi(open: boolean): void {
 /** Which agent filter (or "all") is currently shown, so a window-selector
  * change re-fetches the same view instead of resetting to "all agents". */
 let usagePanelFilter: string | null = null;
+/** The selector's current window. Session-only: reset to Today whenever the
+ * panel opens from closed, never written to config. */
+let usageWindow: TimeWindow = "today";
 /** Guards against a stale response winning a race when the panel is
  * reopened, or the window changed, before the previous fetch resolved. */
 let usageFetchToken = 0;
@@ -423,7 +452,6 @@ function renderUsageSection(section: AgentSectionViewModel): HTMLElement {
 
 /** The window selector row (Today / 7 days / 30 days / This month). */
 function renderWindowSelector(
-  cfg: OrbitbarConfig,
   onChange: (next: TimeWindow) => void,
 ): HTMLElement {
   const row = document.createElement("div");
@@ -436,7 +464,7 @@ function renderWindowSelector(
     const opt = document.createElement("option");
     opt.value = option.value;
     opt.textContent = option.label;
-    if (option.value === cfg.usageWindow) opt.selected = true;
+    if (option.value === usageWindow) opt.selected = true;
     select.appendChild(opt);
   }
   select.addEventListener("change", () => {
@@ -447,18 +475,18 @@ function renderWindowSelector(
   return row;
 }
 
-function renderUsageLoading(body: HTMLElement, cfg: OrbitbarConfig, onWindowChange: (next: TimeWindow) => void): void {
+function renderUsageLoading(body: HTMLElement, onWindowChange: (next: TimeWindow) => void): void {
   body.replaceChildren();
-  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  body.appendChild(renderWindowSelector(onWindowChange));
   const loading = document.createElement("div");
   loading.className = "usage-line usage-line--dim";
   loading.textContent = "Loading usage…";
   body.appendChild(loading);
 }
 
-function renderUsageError(body: HTMLElement, cfg: OrbitbarConfig, onWindowChange: (next: TimeWindow) => void, message: string): void {
+function renderUsageError(body: HTMLElement, onWindowChange: (next: TimeWindow) => void, message: string): void {
   body.replaceChildren();
-  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  body.appendChild(renderWindowSelector(onWindowChange));
   const error = document.createElement("div");
   error.className = "usage-line usage-error";
   error.textContent = `Could not read usage: ${message}`;
@@ -467,13 +495,12 @@ function renderUsageError(body: HTMLElement, cfg: OrbitbarConfig, onWindowChange
 
 function renderUsageResult(
   body: HTMLElement,
-  cfg: OrbitbarConfig,
   onWindowChange: (next: TimeWindow) => void,
   snapshot: UsageSnapshot,
   filterAgent: string | null,
 ): void {
   body.replaceChildren();
-  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  body.appendChild(renderWindowSelector(onWindowChange));
   const vm = buildPanelViewModel(snapshot, filterAgent);
   if (vm.sections.length === 0) {
     const empty = document.createElement("div");
@@ -490,10 +517,10 @@ function renderUsageResult(
 /**
  * Opens (or re-fetches) the usage panel for `action` ("agent-usage" or
  * "agent-usage:<agent>"). `togglePanel` resizes/repositions the window;
- * `persistConfig` is passed in so a window-selector change survives restart.
+ * A window-selector change re-fetches but is never persisted: the panel
+ * starts on Today each time it opens (see `usageWindow`).
  */
 async function openUsagePanel(
-  cfg: OrbitbarConfig,
   action: string,
   body: HTMLElement,
   togglePanel: (open: boolean) => Promise<void>,
@@ -503,22 +530,21 @@ async function openUsagePanel(
 
   const fetchUsage = async (): Promise<void> => {
     const token = ++usageFetchToken;
-    renderUsageLoading(body, cfg, onWindowChange);
+    renderUsageLoading(body, onWindowChange);
     try {
-      const snapshot = await invoke<UsageSnapshot>("get_usage", { window: cfg.usageWindow });
+      const snapshot = await invoke<UsageSnapshot>("get_usage", { window: usageWindow });
       if (token !== usageFetchToken) return; // superseded by a newer fetch
-      renderUsageResult(body, cfg, onWindowChange, snapshot, usagePanelFilter);
+      renderUsageResult(body, onWindowChange, snapshot, usagePanelFilter);
     } catch (err) {
       if (token !== usageFetchToken) return;
       console.error("orbitbar: get_usage failed", err);
-      renderUsageError(body, cfg, onWindowChange, String(err));
+      renderUsageError(body, onWindowChange, String(err));
     }
   };
 
   function onWindowChange(next: TimeWindow): void {
-    if (cfg.usageWindow === next) return;
-    cfg.usageWindow = next;
-    void persistConfig(cfg);
+    if (usageWindow === next) return;
+    usageWindow = next;
     void fetchUsage();
   }
 
@@ -543,14 +569,42 @@ async function openContextMenu(
   actions: (ContextMenuAction | "separator")[],
   onSelect: () => void,
 ): Promise<void> {
-  if (!contextMenuEl) return;
-  await closePanel();
-  setMenuOpen(true);
-  renderContextMenu(contextMenuEl, actions, onSelect);
-  await applyState(cfg, false, true);
-  const size = sizeFor(cfg.collapsed, false, true);
-  positionContextMenu(contextMenuEl, clickY, size.height);
-  contextMenuEl.hidden = false;
+  const menu = contextMenuEl;
+  if (!menu) return;
+  await withMaskedResize(async () => {
+    await closePanel();
+    setMenuOpen(true);
+    renderContextMenu(menu, actions, onSelect);
+    await applyState(cfg, false, true);
+    const size = sizeFor(cfg.collapsed, false, true);
+    positionContextMenu(menu, clickY, size.height);
+    menu.hidden = false;
+  });
+}
+
+/** Resolves after the browser has painted twice, so a state change made
+ * before it is on screen before whatever follows. */
+function afterPaint(): Promise<void> {
+  return new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+}
+
+/**
+ * Runs a window resize with the page painted invisible (`body.resizing`, see
+ * styles.css) and reveals it only once the new size, position and menu state
+ * are settled. `applyState` resizes and repositions with separate native
+ * calls, so without the mask each intermediate window (resized but not yet
+ * moved, with newly exposed transparent area) is composited to the screen.
+ */
+async function withMaskedResize(change: () => Promise<void>): Promise<void> {
+  document.body.classList.add("resizing");
+  try {
+    await change();
+    await afterPaint();
+  } finally {
+    document.body.classList.remove("resizing");
+  }
 }
 
 /** Closes the menu and restores the window to its plain collapsed/expanded
@@ -558,7 +612,7 @@ async function openContextMenu(
 async function closeContextMenu(cfg: OrbitbarConfig, setMenuOpen: (open: boolean) => void): Promise<void> {
   setMenuOpen(false);
   if (contextMenuEl) contextMenuEl.hidden = true;
-  await applyState(cfg, false, false);
+  await withMaskedResize(() => applyState(cfg, false, false));
 }
 
 /** Persist the current config object back to disk. */
@@ -660,6 +714,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   try {
     const payload = await invoke<ConfigPayload>("get_config");
     applyTheme(payload.palette);
+    // The resolved palette name ("light" | "dark"), not cfg.theme: a stored
+    // "classic" or a typo resolves to dark in Rust, and the menu's check
+    // must show what is actually painted.
+    let themeName = payload.palette.name;
     document.documentElement.style.setProperty(
       "--ob-font-size",
       `${payload.config.fontSize}px`,
@@ -730,10 +788,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    // `edit-config` (the ⚙ cell) and "Open config" both open config.json in
-    // the OS default editor via the opener plugin, scoped to the app config
-    // dir (see src-tauri/capabilities/default.json). `run:<cmd>` stays a
-    // documented placeholder — running an arbitrary command is a security
+    // The menu's "Edit config" entry (reached from the ⚙ cell or a right
+    // click) opens config.json in the OS default editor via the opener
+    // plugin, scoped to the app config dir (see
+    // src-tauri/capabilities/default.json). `run:<cmd>` stays a documented
+    // placeholder — running an arbitrary command is a security
     // decision left to the user, see odd/tasks/orbitbar-rebrand.md O9.
     const openConfig = async () => {
       try {
@@ -766,6 +825,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const fresh = await invoke<ConfigPayload>("get_config");
         Object.assign(cfg, fresh.config);
         applyTheme(fresh.palette);
+        themeName = fresh.palette.name;
         document.documentElement.style.setProperty("--ob-font-size", `${cfg.fontSize}px`);
         if (cells) {
           renderCells(cells, cfg.items);
@@ -779,6 +839,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
+    // Saves the choice, then reuses reloadConfig to fetch the resolved
+    // palette and apply it live: same path as "Reload config", no restart.
+    const setTheme = async (theme: ThemeName) => {
+      cfg.theme = theme;
+      await persistConfig(cfg);
+      await reloadConfig();
+    };
+
     const quit = async () => {
       try {
         await invoke("quit_app");
@@ -788,26 +856,29 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     const contextMenuActions = () =>
-      buildContextMenuActions(cfg, {
-        openConfig,
-        openPricing,
-        toggleCollapsed,
-        reloadConfig,
-        quit,
-      });
+      buildContextMenuActions(
+        cfg,
+        { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, quit },
+        themeName,
+      );
+
+    // Shared by right-click on the bar and left-click on the settings cell,
+    // so both open the very same menu anchored at the pointer.
+    const showContextMenu = (clientY: number) =>
+      openContextMenu(
+        cfg,
+        clientY,
+        closePanel,
+        setMenuOpen,
+        contextMenuActions(),
+        () => void closeContextMenu(cfg, setMenuOpen),
+      );
 
     const barEl = document.querySelector<HTMLElement>("#bar");
     if (barEl) {
       barEl.addEventListener("contextmenu", (ev) => {
         ev.preventDefault();
-        void openContextMenu(
-          cfg,
-          (ev as MouseEvent).clientY,
-          closePanel,
-          setMenuOpen,
-          contextMenuActions(),
-          () => void closeContextMenu(cfg, setMenuOpen),
-        );
+        void showContextMenu((ev as MouseEvent).clientY);
       });
     }
 
@@ -816,6 +887,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (!menuOpen || !contextMenuEl) return;
       const target = ev.target as HTMLElement;
       if (contextMenuEl.contains(target)) return;
+      // The settings cell toggles the menu in its own click handler; closing
+      // here first would make that click see a closed menu and reopen it.
+      if (target.closest('.cell[data-action="edit-config"]')) return;
       void closeContextMenu(cfg, setMenuOpen);
     });
 
@@ -846,6 +920,18 @@ window.addEventListener("DOMContentLoaded", async () => {
 
         const action = target.dataset.action ?? "";
 
+        // The settings cell opens the context menu (where "Edit config"
+        // lives) instead of acting directly. It never becomes the panel's
+        // active action: the menu closes any open panel first.
+        if (action === "edit-config") {
+          if (menuOpen) {
+            await closeContextMenu(cfg, setMenuOpen);
+            return;
+          }
+          await showContextMenu((ev as MouseEvent).clientY);
+          return;
+        }
+
         // Clicking the cell that is already driving the open panel closes
         // it, same as Escape or the close button.
         if (panelOpen && activePanelAction === action) {
@@ -857,14 +943,11 @@ window.addEventListener("DOMContentLoaded", async () => {
         if (!body) return;
 
         if (isUsageAction(action)) {
+          // Opening from closed starts on Today; switching agent while the
+          // panel is already open keeps the user's current selection.
+          if (!panelOpen) usageWindow = "today";
           activePanelAction = action;
-          await openUsagePanel(cfg, action, body, togglePanel);
-          return;
-        }
-
-        if (action === "edit-config") {
-          activePanelAction = action;
-          await openConfig();
+          await openUsagePanel(action, body, togglePanel);
           return;
         }
 
