@@ -850,25 +850,23 @@ function paintAutostart(autostartCells: Map<HTMLElement, string>, on: boolean): 
   }
 }
 
-/** The real OS registration; `fallback` when it cannot be read. */
-async function readAutostart(fallback: boolean): Promise<boolean> {
+/** The real OS registration, not the config: they can disagree, since the user
+ * can revoke the Run key in OS settings without touching our config. `null`
+ * when it cannot be read; callers pick their own fallback. */
+async function readAutostart(): Promise<boolean | null> {
   try {
     return await isAutostartEnabled();
   } catch (err) {
     console.error("orbitbar: could not read autostart state", err);
-    return fallback;
+    return null;
   }
 }
 
-/** Reads the real OS registration, not the config — they can disagree: the
- * user can revoke the Run key in OS settings without touching our config. */
+/** Repaints the autostart cells from the real OS registration. */
 async function refreshAutostartUi(autostartCells: Map<HTMLElement, string>): Promise<void> {
   if (autostartCells.size === 0) return;
-  try {
-    paintAutostart(autostartCells, await isAutostartEnabled());
-  } catch (err) {
-    console.error("orbitbar: could not read autostart state", err);
-  }
+  const on = await readAutostart();
+  if (on !== null) paintAutostart(autostartCells, on);
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -987,7 +985,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const reloadConfig = async () => {
       try {
         const fresh = await invoke<ConfigPayload>("get_config");
-        const autostartOn = await readAutostart(fresh.config.autoStart);
+        const autostartOn = (await readAutostart()) ?? fresh.config.autoStart;
         Object.assign(cfg, fresh.config);
         applyTheme(fresh.palette);
         themeName = fresh.palette.name;
@@ -1026,7 +1024,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     // outside the app), falling back to the config when it cannot be read.
     // If the OS refuses the write, neither the config nor the UI changes.
     const toggleAutostart = async () => {
-      const next = !(await readAutostart(cfg.autoStart));
+      const next = !((await readAutostart()) ?? cfg.autoStart);
       try {
         if (next) await enableAutostart();
         else await disableAutostart();
@@ -1060,7 +1058,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         cfg,
         { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, toggleAutostart, toggleExamples, quit },
         themeName,
-        await readAutostart(cfg.autoStart),
+        (await readAutostart()) ?? cfg.autoStart,
       );
 
     // Shared by right-click on the bar and left-click on the settings cell,
