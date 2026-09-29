@@ -460,6 +460,10 @@ body.moon .bar {
 body.collapsed .bar {
   flex-basis: 46px;
   width: 46px;
+  /* The window grows taller while the context menu is open; the tab must
+   * stay a 46px square centered on the edge instead of stretching with it. */
+  height: 46px;
+  align-self: center;
   border-radius: var(--ob-tab-radius) 0 0 var(--ob-tab-radius);
 }
 
