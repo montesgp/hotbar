@@ -62,6 +62,14 @@ body {
 body {
   display: flex;
   align-items: stretch;
+  /* The bar is a fixed-width flex item (see .bar below), never `flex: 1`, so
+   * it must be pushed to the right edge itself instead of relying on a
+   * flex sibling to absorb the leftover space. That leftover space is
+   * exactly where the panel (a real flex sibling, fixed 320px) or the
+   * context menu (a `position: fixed` overlay, NOT a flex sibling) render;
+   * flex-end keeps the bar pinned right in both cases and when neither is
+   * open. */
+  justify-content: flex-end;
 }
 
 /*
@@ -70,13 +78,23 @@ body {
  * sibling card (see index.html) instead of a child: `overflow: hidden`
  * below clips anything inside `.bar` to its curve, and the panel used to be
  * that "anything" — its select text and long project paths were clipped
- * against the ellipse instead of a straight edge. The bar keeps a fixed
- * 72px whether the panel is open or not; `flex: 1 1 auto` just lets it fill
- * whatever the window's width minus the panel (0 or 320px) leaves it.
+ * against the ellipse instead of a straight edge.
+ *
+ * The bar is a FIXED 72px (46px collapsed, see body.collapsed .bar below),
+ * never `flex: 1 1 auto`. It used to be flex:1 on the assumption that a
+ * flex sibling (the panel, fixed 0 0 320px, or nothing) always accounts for
+ * the rest of the window's width — true for the panel, but the context
+ * menu is a `position: fixed` overlay that claims no flex space, so with
+ * flex:1 the bar itself stretched to fill the widened window and the
+ * crescent deformed (cells off-center, tab stretched when collapsed). A
+ * fixed width plus `justify-content: flex-end` on body keeps the bar
+ * pixel-identical to its menu-closed shape in every state; any leftover
+ * width is exactly where the panel or the menu card renders.
  */
 .bar {
   position: relative;
-  flex: 1 1 auto;
+  flex: 0 0 72px;
+  width: 72px;
   height: 100%;
   display: flex;
   align-items: center;
@@ -440,6 +458,8 @@ body.moon .bar {
  * chevron flips because expanding grows the bar LEFT into the desktop.
  */
 body.collapsed .bar {
+  flex-basis: 46px;
+  width: 46px;
   border-radius: var(--ob-tab-radius) 0 0 var(--ob-tab-radius);
 }
 
