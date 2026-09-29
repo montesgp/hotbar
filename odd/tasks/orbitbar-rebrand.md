@@ -219,6 +219,18 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       `Get-CimInstance` sweep for `orbitbar|tauri dev|vite` showed nothing after clicking Quit,
       including the dev-server-launched process tree (npm → vite → cargo → orbitbar.exe all
       exited, no orphaned `msedgewebview2.exe`).
+      **Follow-up fix (same session, after coordinator review of these screenshots):** the
+      screenshots above also showed the crescent bar itself stretching to fill the widened
+      window (cells off-center expanded, tab stretched collapsed) instead of staying a fixed
+      72px/46px card with the menu beside it. Root cause: `.bar` was `flex: 1 1 auto`, which
+      only stayed at 72px because the panel — a real, fixed-width flex sibling — used to
+      account for every extra pixel; the menu card is `position: fixed` and claims no flex
+      space, so with the panel closed `.bar` was the sole flex child and stretched to fill the
+      whole window. Fixed by giving `.bar` a fixed `flex-basis`/`width` (72px, 46px collapsed)
+      and `justify-content: flex-end` on `body` so it stays pinned right with no flex sibling
+      to do that for it. Commit `9719323`. Re-verified: menu expanded (242x400) and collapsed
+      (216x210) — bar now pixel-identical in width/shape to the menu-closed screenshots; usage
+      panel open (392x400) still renders correctly, no regression.
 - [x] **Unit 6 — Wire `edit-config` / "Open pricing file" / "Reload config"** (O9, minus
       `run:<cmd>`). The ⚙ cell and the menu's "Open config" call `get_config_path` then
       `@tauri-apps/plugin-opener`'s `openPath`; "Open pricing file" calls the new
