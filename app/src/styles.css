@@ -3,11 +3,9 @@
  * the Rust ThemePalette (themes are data, never code). The :root block below
  * is only a fallback so the page is not blank before get_config resolves.
  *
- * Geometry here is ported 1:1 from the measured WPF v1 window
- * (legacy/windows-widget/orbitbar.ps1).
- * Those numbers are a specification, not a style opinion: the bar is 72x400 and
- * the crescent is a 200px radius on the left edge, which is exactly what the
- * WPF `CornerRadius="200,0,0,200"` produced on a 72x400 border.
+ * Geometry here is a fixed specification, not a style opinion: the bar is
+ * 72x400 and the crescent is a 200px radius on the left edge (equivalent to
+ * a `CornerRadius="200,0,0,200"` on a 72x400 border).
  */
 :root {
   --ob-bg: #101014;
@@ -177,8 +175,8 @@ body.moon .bar {
 
 /*
  * Token-usage panel (agent-usage / agent-usage:<agent>). Layout only — the
- * numbers and status text come from app/src/usage-view.ts, which mirrors the
- * legacy Get-OrbitbarAgentLines panel (status, totals, cost, top projects).
+ * numbers and status text come from app/src/usage-view.ts (status, totals,
+ * cost, top projects).
  */
 .usage-window-row {
   margin-bottom: 6px;

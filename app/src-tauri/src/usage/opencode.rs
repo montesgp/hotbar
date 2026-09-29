@@ -1,6 +1,5 @@
 //! Opencode usage reader: SQLite `session` table at
-//! `~/.local/share/opencode/opencode.db`. Ported from `Get-OpenCodeAgentHistory`
-//! in `legacy/windows-widget/lib/Get-AgentUsage.ps1`.
+//! `~/.local/share/opencode/opencode.db`.
 //!
 //! The `session` table is already consolidated per session (unlike the
 //! claude/codex jsonl stores), so this is two indexed `SELECT`s: one totals

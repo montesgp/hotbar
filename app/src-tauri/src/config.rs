@@ -7,16 +7,11 @@
 //!
 //! If the file does not exist on first launch it is created with the defaults
 //! below, so end users always get an editable config without installing tools.
-//!
-//! The Tauri identifier used to be `com.hotbar.app`, which put the config in a
-//! sibling directory under the same platform config root. `migrate_legacy_config`
-//! copies that old file into the new location on first launch so a rename of
-//! the app never drops an existing user's settings.
 
 use crate::usage::TimeWindow;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,8 +30,8 @@ pub struct AppConfig {
     pub auto_start: bool,
     /// The time window the usage panel (`agent-usage` / `agent-usage:<agent>`)
     /// reads by default and persists after the user changes the selector.
-    /// Defaults to `ThisMonth`, matching the legacy widget's month-to-date
-    /// panel; a config written before this field existed simply gets that
+    /// Defaults to `ThisMonth`, the month-to-date view most useful at a
+    /// glance; a config written before this field existed simply gets that
     /// default rather than failing to parse, the same migration-safe pattern
     /// `auto_start` uses above.
     pub usage_window: TimeWindow,
@@ -173,14 +168,6 @@ pub fn load(app: &AppHandle) -> Result<AppConfig, String> {
     let dir = config_dir(app)?;
     let path = dir.join("config.json");
 
-    if let Some(legacy_dir) = legacy_config_dir(app) {
-        let legacy_path = legacy_dir.join("config.json");
-        // Best-effort: a migration failure (e.g. unreadable old file) must not
-        // block startup. Falling through to the ordinary default-writer below
-        // is strictly better than refusing to launch.
-        let _ = migrate_legacy_config(&legacy_path, &path);
-    }
-
     if !path.exists() {
         let cfg = AppConfig::default();
         persist(&path, &cfg)?;
@@ -232,33 +219,6 @@ pub fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("cannot resolve app config dir: {e}"))?;
     fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     Ok(dir)
-}
-
-/// The pre-rename per-user config dir, if it can be resolved. The Tauri
-/// identifier used to be `com.hotbar.app`, a sibling of the current
-/// `com.orbitbar.app` under the same platform config root, so this never
-/// calls `app_config_dir()` itself (that resolves the *current* identifier)
-/// and instead derives the sibling path from it.
-fn legacy_config_dir(app: &AppHandle) -> Option<PathBuf> {
-    let dir = app.path().app_config_dir().ok()?;
-    let parent = dir.parent()?;
-    Some(parent.join("com.hotbar.app"))
-}
-
-/// Copies `old_path` into `new_path` when the new config does not exist yet
-/// but the old one does. Returns whether a migration happened. The old file
-/// is left in place (copy, not move) so a rollback to a previous build still
-/// finds its config.
-fn migrate_legacy_config(old_path: &Path, new_path: &Path) -> Result<bool, String> {
-    if new_path.exists() || !old_path.exists() {
-        return Ok(false);
-    }
-    if let Some(parent) = new_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
-    fs::copy(old_path, new_path)
-        .map_err(|e| format!("cannot copy {} to {}: {e}", old_path.display(), new_path.display()))?;
-    Ok(true)
 }
 
 fn persist(path: &PathBuf, cfg: &AppConfig) -> Result<(), String> {
@@ -416,82 +376,6 @@ mod tests {
     fn an_explicit_usage_window_is_preserved() {
         let cfg: AppConfig = serde_json::from_str(r#"{"usageWindow":"last7Days"}"#).unwrap();
         assert_eq!(cfg.usage_window, TimeWindow::Last7Days);
-    }
-
-    /// The identifier rename (`com.hotbar.app` -> `com.orbitbar.app`) moves the
-    /// per-user config dir. A user with an existing config under the old
-    /// identifier must not lose it: the old file gets copied into the new
-    /// location on first launch, before it is loaded.
-    #[test]
-    fn migrate_legacy_config_copies_old_into_new_when_only_old_exists() {
-        let tmp = std::env::temp_dir().join(format!(
-            "orbitbar-migrate-test-{}-a",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        let old_path = tmp.join("old").join("config.json");
-        let new_path = tmp.join("new").join("config.json");
-        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
-        fs::write(&old_path, r#"{"theme":"dark"}"#).unwrap();
-
-        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
-
-        assert!(migrated, "must report that it migrated");
-        assert!(new_path.exists(), "new config must now exist");
-        assert!(old_path.exists(), "old config must be preserved, not moved");
-        assert_eq!(
-            fs::read_to_string(&new_path).unwrap(),
-            fs::read_to_string(&old_path).unwrap()
-        );
-
-        let _ = fs::remove_dir_all(&tmp);
-    }
-
-    /// When the new config already exists, the migration must not clobber it
-    /// with the old one, even if the old one is still present.
-    #[test]
-    fn migrate_legacy_config_does_nothing_when_new_already_exists() {
-        let tmp = std::env::temp_dir().join(format!(
-            "orbitbar-migrate-test-{}-b",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        let old_path = tmp.join("old").join("config.json");
-        let new_path = tmp.join("new").join("config.json");
-        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
-        fs::create_dir_all(new_path.parent().unwrap()).unwrap();
-        fs::write(&old_path, r#"{"theme":"dark"}"#).unwrap();
-        fs::write(&new_path, r#"{"theme":"classic"}"#).unwrap();
-
-        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
-
-        assert!(!migrated, "must not report a migration");
-        assert_eq!(fs::read_to_string(&new_path).unwrap(), r#"{"theme":"classic"}"#);
-
-        let _ = fs::remove_dir_all(&tmp);
-    }
-
-    /// When neither file exists, migration is a safe no-op: the ordinary
-    /// first-launch default writer takes over from there.
-    #[test]
-    fn migrate_legacy_config_does_nothing_when_neither_exists() {
-        let tmp = std::env::temp_dir().join(format!(
-            "orbitbar-migrate-test-{}-c",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        let old_path = tmp.join("old").join("config.json");
-        let new_path = tmp.join("new").join("config.json");
-
-        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
-
-        assert!(!migrated);
-        assert!(!new_path.exists());
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// The default set must stay usable: the bar renders nothing if there is

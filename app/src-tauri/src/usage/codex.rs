@@ -1,18 +1,17 @@
 //! Codex usage reader: every `*.jsonl` under `~/.codex/sessions`, last record
-//! per session wins. Ported from `Get-CodexAgentHistory` in
-//! `legacy/windows-widget/lib/Get-AgentUsage.ps1`.
+//! per session wins.
 //!
 //! `payload.turn_token_usage` (and its terminal sibling
 //! `payload.info.total_token_usage`) is the running SESSION total on every
 //! record, not a per-turn delta: summing them inflates a session by an order
-//! of magnitude (verified on the legacy widget's machine: 21 records,
-//! input_tokens strictly increasing from 30 796 to 1 356 488, the last record
-//! already equal to the thread total). So only the LAST usage-bearing record
-//! in each file is kept.
+//! of magnitude (verified on a real session: 21 records, input_tokens
+//! strictly increasing from 30 796 to 1 356 488, the last record already
+//! equal to the thread total). So only the LAST usage-bearing record in each
+//! file is kept.
 //!
-//! Same windowing deviation as the claude reader: the legacy script gates the
-//! month total by the session's last timestamp but fills the per-project
-//! bucket unconditionally; this port applies the window to both.
+//! Same windowing rule as the claude reader: the month total and the
+//! per-project bucket are both gated by the session's last timestamp, so an
+//! out-of-window session never leaks into either.
 
 use crate::usage::{
     find_jsonl_files, normalize_project_path, pricing, project_display_name, AgentUsageReport,

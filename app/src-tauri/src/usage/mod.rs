@@ -1,8 +1,7 @@
 //! Token-spend usage readers: claude, codex and opencode, each read from the
-//! agent's own local files, no external service or program involved. Ported
-//! from `legacy/windows-widget/lib/Get-AgentUsage.ps1`
-//! (`Get-*AgentHistory`), which is the semantics source of truth for
-//! deduplication, cumulative-vs-summed counters and cost estimation.
+//! agent's own local files, no external service or program involved. The
+//! per-agent modules below own the deduplication, cumulative-vs-summed
+//! counter handling and windowing each store needs.
 //!
 //! One function, [`collect_usage`], returns a per-agent breakdown for a time
 //! window plus a per-project split sorted by output tokens. A broken or
@@ -19,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// The time window a snapshot is computed over. `ThisMonth` is the default,
-/// matching the legacy widget's month-to-date panel.
+/// the month-to-date view most useful at a glance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum TimeWindow {
@@ -186,8 +185,7 @@ pub struct UsagePaths {
 /// real one; the ordinary caller passes `None` and gets `dirs::home_dir()`.
 ///
 /// The layout is home-relative and identical across Windows, macOS and
-/// Linux, matching what `legacy/windows-widget/lib/Get-AgentUsage.ps1`
-/// verified on disk: opencode is a cross-platform CLI that writes to
+/// Linux: opencode is a cross-platform CLI that writes to
 /// `<home>/.local/share/opencode/opencode.db` on every OS, not to each
 /// platform's "special" data directory, so this mirrors that literal path
 /// rather than asking `dirs::data_dir()` for a platform-specific one.
@@ -207,10 +205,10 @@ pub fn resolve_paths(home_override: Option<&Path>) -> Option<UsagePaths> {
     })
 }
 
-/// The canonical form of a project path: trimmed, slashes normalized to the
-/// platform separator style used by the legacy widget (backslash), trailing
-/// separator removed. Ported from `Normalize-AgentProjectPath` so the same
-/// cwd string always buckets to the same project key.
+/// The canonical form of a project path: trimmed, slashes normalized to a
+/// single separator style (backslash), trailing separator removed, so the
+/// same cwd string always buckets to the same project key regardless of
+/// which OS or agent wrote it.
 pub fn normalize_project_path(path: &str) -> String {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -271,10 +269,10 @@ pub struct UsageSnapshot {
 
 /// Reads all three agents for `window`, as of `now`, pricing claude/codex
 /// against `overrides` layered on top of the built-in table (see
-/// `pricing::find_price_entry`). Sequential like the legacy widget: three
-/// bounded, independent reads are cheaper than the coordination a parallel
-/// version would need, and a broken one never blocks the others because each
-/// is wrapped in its own `AgentUsageReport`.
+/// `pricing::find_price_entry`). Sequential: three bounded, independent reads
+/// are cheaper than the coordination a parallel version would need, and a
+/// broken one never blocks the others because each is wrapped in its own
+/// `AgentUsageReport`.
 pub fn collect_usage(
     window: TimeWindow,
     paths: &UsagePaths,
@@ -397,10 +395,10 @@ mod tests {
     }
 
     /// Not a unit test: prints the real home directory's ThisMonth snapshot
-    /// so it can be compared by hand against the legacy PowerShell reader's
-    /// `Get-AgentHistorySnapshot`. `--ignored` because it depends on this
-    /// machine's real `.claude` / `.codex` / opencode stores, which do not
-    /// exist in CI or on a fresh checkout.
+    /// so it can be sanity-checked by hand against what the agents' own UIs
+    /// report. `--ignored` because it depends on this machine's real
+    /// `.claude` / `.codex` / opencode stores, which do not exist in CI or on
+    /// a fresh checkout.
     ///
     /// Run with: `cargo test -- --ignored parity --nocapture`
     #[test]

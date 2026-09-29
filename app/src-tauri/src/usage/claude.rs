@@ -1,20 +1,16 @@
 //! Claude usage reader: every `*.jsonl` under `~/.claude/projects`, de-duped
-//! and windowed. Ported from `Get-ClaudeAgentHistory` in
-//! `legacy/windows-widget/lib/Get-AgentUsage.ps1`.
+//! and windowed.
 //!
 //! Subagent files are billed too, so every file counts, not just the newest
 //! one. The store keeps more than one copy of many assistant messages
 //! (original plus a snapshot copy), so entries are de-duplicated per file by
 //! `requestId`, falling back to `message.id` and then `uuid` - summing raw
-//! doubles every counter, verified on the legacy widget's own machine.
+//! doubles every counter.
 //!
-//! Deviation from the legacy script: the legacy per-project bucket is filled
-//! from every entry seen in the read budget regardless of whether that entry
-//! falls inside the month, while the month total is filtered. That looks like
-//! an oversight rather than a deliberate design (the panel's own docstring
-//! says the project split is "over every project cwd the agent's own store
-//! touched this month"), so this port applies the window consistently to
-//! both the totals and the per-project breakdown.
+//! The window is applied consistently to both the totals and the
+//! per-project breakdown: an entry outside the window never contributes to
+//! either, so the per-project split always matches what the totals claim for
+//! the same window.
 
 use crate::usage::{
     find_jsonl_files, normalize_project_path, pricing, project_display_name, AgentUsageReport,

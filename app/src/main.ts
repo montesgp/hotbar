@@ -211,12 +211,9 @@ function setPanelUi(open: boolean): void {
 
 /**
  * Token-usage panel: renders `get_usage(window)` for either every agent
- * (`agent-usage`) or one agent (`agent-usage:<agent>`). Ported from the
- * legacy widget's `Get-OrbitbarAgentLines` / `Get-OrbitbarUsageLines`
- * (`legacy/windows-widget/orbitbar.ps1`): status, totals, cost, then up to 5
- * top projects. Unlike the legacy panel this has no refresh timer — the task
- * calls for a fetch on open and on window change only, never background
- * polling.
+ * (`agent-usage`) or one agent (`agent-usage:<agent>`): status, totals,
+ * cost, then up to 5 top projects. There is no refresh timer — the panel
+ * fetches on open and on window change only, never background polling.
  */
 
 /** Which agent filter (or "all") is currently shown, so a window-selector

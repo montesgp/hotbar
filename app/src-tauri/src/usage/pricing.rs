@@ -1,14 +1,12 @@
 //! Official list prices for the cloud models the agent stores report, used to
 //! estimate money for claude and codex because neither jsonl store writes a
-//! cost field. Ported from `legacy/windows-widget/lib/Get-AgentPricing.ps1`,
-//! then re-verified against each provider's own pricing page (see the
+//! cost field. Verified against each provider's own pricing page (see the
 //! `source`/`as_of` on every row) and extended with a user override file so
 //! nobody is stuck waiting on this table for a model they already use.
 //!
-//! User decision carried over from the legacy widget: claude/codex money is
-//! ESTIMATED from official prices times the real tokens read from the store.
-//! opencode keeps its own real `session.cost` and never goes through this
-//! table.
+//! By design, claude/codex money is ESTIMATED from official prices times the
+//! real tokens read from the store. opencode keeps its own real
+//! `session.cost` and never goes through this table.
 //!
 //! A model with no row in the table (built-in or user override) produces NO
 //! money at all - `None` - never a guess from a similar model. Inventing a
@@ -33,10 +31,10 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// One built-in price row. Amounts are $ per 1M tokens, same convention as
-/// the legacy table. `source` and `as_of` are the auditor trail: not
-/// consumed by the estimator itself, but they are why every number in this
-/// file can be checked against a real page instead of taken on faith.
+/// One built-in price row. Amounts are $ per 1M tokens. `source` and `as_of`
+/// are the auditor trail: not consumed by the estimator itself, but they are
+/// why every number in this file can be checked against a real page instead
+/// of taken on faith.
 #[allow(dead_code)]
 pub struct PriceEntry {
     pub id: &'static str,
@@ -66,9 +64,7 @@ const CLAUDE_AS_OF: &str = "2026-09-28";
 const OPENAI_SOURCE: &str = "https://developers.openai.com/api/docs/pricing";
 const OPENAI_AS_OF: &str = "2026-09-28";
 
-/// Rows are $ per 1M tokens. Kept in sync with
-/// `legacy/windows-widget/lib/Get-AgentPricing.ps1`; edit both when prices
-/// change.
+/// Rows are $ per 1M tokens.
 const PRICE_TABLE: &[PriceEntry] = &[
     // --- Claude (Anthropic first-party API) ---
     PriceEntry {
@@ -411,8 +407,7 @@ fn find_price_entry(model: &str, overrides: &PriceOverrides) -> Option<ResolvedP
 /// The result of one estimate: `amount` is `None` when the model has no price
 /// row, never a guessed number. `model` is the canonical priced id (matching
 /// the matched row's key) when a row was found, kept for callers that want to
-/// show which row was used, mirroring the legacy widget's separate
-/// `MonthModel`.
+/// show which row was used.
 #[allow(dead_code)]
 pub struct EstimatedCost {
     pub amount: Option<f64>,
