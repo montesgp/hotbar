@@ -11,7 +11,9 @@
 //!
 //! Same windowing rule as the claude reader: the month total and the
 //! per-project bucket are both gated by the session's last timestamp, so an
-//! out-of-window session never leaks into either.
+//! out-of-window session never leaks into either. Sessions outside any project (a cwd under the OS temp dir, or an existing
+//! folder that is not inside a repository; see `resolve_project_root`) are
+//! left out of the totals and the project rows alike, so that invariant holds.
 
 use crate::usage::{
     find_jsonl_files, normalize_project_path, pricing, project_display_name, resolve_project_root,
@@ -60,6 +62,11 @@ pub fn read_usage(
     let mut projects: std::collections::HashMap<String, Bucket> = std::collections::HashMap::new();
     let mut files_scanned = 0u64;
     let mut no_cwd = 0u64;
+    // Sessions in the window whose cwd is excluded (see `resolve_project_root`).
+    // They are left out of the month totals AND the per-project rows, so the
+    // per-project split still sums to the totals. A session with no cwd at
+    // all cannot be judged, so it stays in the totals (counted in `no_cwd`).
+    let mut excluded = 0u64;
 
     for file in &files {
         let Ok(handle) = std::fs::File::open(file) else { continue };
@@ -127,14 +134,26 @@ pub fn read_usage(
         let reasoning = get_u64(&usage, "reasoning_output_tokens");
         let model = if file_model.is_empty() { None } else { Some(file_model.as_str()) };
 
+        let project_key = if file_cwd.is_empty() {
+            None
+        } else {
+            match resolve_project_root(&file_cwd, root_cache) {
+                Some(root) => Some(root),
+                None => {
+                    excluded += 1;
+                    continue;
+                }
+            }
+        };
+
         add_entry(&mut month, input, output, cached, cache_write, reasoning, model);
 
-        if !file_cwd.is_empty() {
-            let project_key = resolve_project_root(&file_cwd, root_cache);
-            let bucket = projects.entry(project_key).or_insert_with(Bucket::new);
-            add_entry(bucket, input, output, cached, cache_write, reasoning, model);
-        } else {
-            no_cwd += 1;
+        match project_key {
+            Some(project_key) => {
+                let bucket = projects.entry(project_key).or_insert_with(Bucket::new);
+                add_entry(bucket, input, output, cached, cache_write, reasoning, model);
+            }
+            None => no_cwd += 1,
         }
     }
 
@@ -188,6 +207,9 @@ pub fn read_usage(
     let mut detail = format!("{} projects - {} files", projects_out.len(), files_scanned);
     if no_cwd > 0 {
         detail.push_str(&format!(" - {no_cwd} sesiones sin cwd atribuible"));
+    }
+    if excluded > 0 {
+        detail.push_str(&format!(" - {excluded} sessions outside any project not counted"));
     }
     AgentUsageReport::ok(AGENT, month_totals, projects_out, detail)
 }
@@ -335,7 +357,10 @@ mod tests {
             start,
             end,
             &pricing::PriceOverrides::default(),
-            &mut ProjectRootCache::new(),
+            &mut ProjectRootCache::with_policy(crate::usage::RootPolicy {
+                temp_dirs: Vec::new(),
+                home: Some(dir.path().to_path_buf()),
+            }),
         );
         assert_eq!(report.projects.len(), 1, "both cwds share the same repo root");
         assert_eq!(report.projects[0].totals.output_tokens, 30, "tokens from both cwds must sum");
@@ -410,5 +435,43 @@ mod tests {
         // so the total is not an even 2.0 but is far from the built-in
         // gpt-5.6-luna rate's result (0.20 in / 1.20 out) either way.
         assert_eq!(report.totals.cost, Some(1.9992));
+    }
+
+    /// Sessions whose cwd is scratch (a review subprocess under the temp dir)
+    /// or a folder outside any repository are not counted anywhere: not in the
+    /// project rows and not in the totals, so the split still sums to the
+    /// totals. A session with no cwd cannot be judged and stays in the totals.
+    #[test]
+    fn sessions_outside_any_project_are_left_out_of_totals_and_rows() {
+        use crate::usage::RootPolicy;
+        let dir = tempdir().unwrap();
+        let temp = dir.path().join("Temp");
+        let plain = dir.path().join("plain");
+        fs::create_dir_all(&plain).unwrap();
+        let cwd = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+        let sessions = [
+            ("kept", cwd(&dir.path().join("kept-app").join("app")), 10),
+            ("review", cwd(&temp.join("gentle-ai-codex-reviewer-1")), 500),
+            ("plain", cwd(&plain), 700),
+            ("nocwd", String::new(), 5),
+        ];
+        for (name, session_cwd, output) in &sessions {
+            let content = record("2026-09-15T10:00:00Z", session_cwd, 100, *output) + "\n";
+            fs::write(dir.path().join(format!("{name}.jsonl")), content).unwrap();
+        }
+
+        let mut cache = ProjectRootCache::with_policy(RootPolicy {
+            temp_dirs: vec![temp],
+            home: Some(dir.path().to_path_buf()),
+        });
+        let (start, end) = window();
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut cache);
+
+        assert_eq!(report.totals.entries, 2, "the kept session and the one with no cwd");
+        assert_eq!(report.totals.output_tokens, 15);
+        assert_eq!(report.projects.len(), 1);
+        assert_eq!(report.projects[0].name, "kept-app");
+        assert_eq!(report.projects[0].totals.output_tokens, 10);
+        assert!(report.detail.contains("2 sessions outside any project not counted"), "{}", report.detail);
     }
 }

@@ -232,6 +232,14 @@ with a warning.
 `~` is your home directory on every OS. See
 [docs/architecture.md](docs/architecture.md) for how the readers work.
 
+Usage is grouped by project: the repository a session ran in. Runs that are
+not part of a project are not counted, neither in the project list nor in the
+agent totals: sessions started in your operating system's temporary folder
+(for example a tool that spawns short-lived agent runs there), and sessions
+started in a folder that is not inside any Git repository (such as your home
+folder). A project whose folder was renamed or deleted still appears, as one
+row named after the folder that is gone.
+
 ## Extensions
 
 Orbitbar has optional extensions for the Herdr TUI and the

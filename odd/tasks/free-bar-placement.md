@@ -71,6 +71,21 @@ is test-first; the frontend only applies the result.
 - [x] **F5 — Review fixes.** Serialize every placement; convert physical offsets to CSS px.
       Checks: CI set; manual — quick menu/collapse/drag sequences, scale factor above 100%.
 
+- [x] **F6 — Usage per project root only.** Reported 2026-09-29 after testing F1–F5. (a) Claude
+      lists subfolders of `herdr-omniroute` (the repo renamed to `orbitbar`): the cwd no longer
+      exists, the walk finds no `.git`, and the fallback keeps the raw cwd. Fix: a missing cwd
+      with no repo found buckets under its topmost missing directory (the deleted/renamed repo
+      root). (b) Codex lists `%TEMP%\gentle-ai-codex-reviewer-*` (gentle-ai review runs) and
+      non-repo cwds (`~`, `C:epositories\personal`). User decision (option C): **exclude**
+      them from both the project list and the agent totals. Rule: cwd under the OS temp dir →
+      excluded; existing cwd with no repo ancestor → excluded; missing cwd → (a). Same rule for
+      Claude, Codex and OpenCode. Test-first (`cargo test`). Docs: README data/usage notes.
+- [ ] **F7 — Flash when choosing a menu entry.** Still present after F5: picking any entry
+      looks like the app closes and reopens. Hypothesis (unconfirmed): `set_bounds` toggles
+      `resizable` around every resize (`lib.rs:210,216`), which changes the window style on
+      Windows and forces a full frame redraw. Try removing the toggle (e.g. keep the window
+      resizable with no resize hit-test, or lift the min/max lock explicitly) and avoid any
+      resize that is not needed. User verifies on screen.
 Route: one delegated writer for F1–F4 (2+ non-trivial files: `lib.rs`, `config.rs`,
 `main.ts`, `styles.css`, `Cargo.toml`, docs). One work-unit commit per task.
 
@@ -137,7 +152,31 @@ then promote to `main` without a tag unless the user asks for a release.
   `cargo test` 135 passed; clippy clean. Commit: see git log
   (`fix: serialize bar placement and convert offsets to CSS pixels`).
 
+- 2026-09-29 user test of the release build (F1–F5): auto-position bug fixed, menu entries open
+  anywhere. New reports → F6, F7. Singleton not reported on.
+
+- F6 done (TDD on, runner `cargo test`). RED: resolver API first changed to
+  `Option<String>` with the old behavior, then 7 resolver tests + 4 reader tests written:
+  `test result: FAILED. 134 passed; 11 failed` (topmost-missing root, temp exclusion incl. case
+  and component boundary, existing non-repo folder, home, exclusion cache; per-reader
+  exclusion from totals and rows). GREEN: `145 passed; 0 failed; 1 ignored`; four older tests
+  updated because their fixtures (repos under the real temp dir, siblings under a missing
+  `C:\repos`) now fall under the new rules. Clippy clean, `npx tsc --noEmit` clean,
+  `npm run build` ok. Real-home parity run (`cargo test -- --ignored parity`): projects per
+  agent 5 / 5 / 4.
+  Design: `resolve_project_root(cwd, &mut ProjectRootCache) -> Option<String>` (None =
+  excluded); `ProjectRootCache::{new, with_policy}` and `RootPolicy { temp_dirs, home }` make the
+  boundaries injectable (`system()` = OS temp dir, also its canonical form, and the home dir).
+  Order: temp -> excluded; else nearest `.git` walking up from the deepest surviving ancestor
+  (never into home); no repo: existing cwd -> excluded, missing cwd -> topmost missing dir (raw cwd
+  if no ancestor exists). Excluded entries are skipped before any counting, so the per-project
+  split still sums to the totals. Empty/absent cwd: unchanged, kept in totals with no project row
+  (it cannot be judged, so option C does not reach it). OpenCode totals come from a separate SQL
+  query, so the excluded rows' totals are subtracted (cost back to None if nothing is left).
+  `detail` gains "N entries/sessions outside any project not counted". README "Data sources"
+  and `docs/architecture.md` updated. Existing Spanish string "sesiones sin cwd atribuible" left
+  as is.
+
 ## Next step
 
-User: manual GUI checks (see F3; also try a scale factor above 100% and quick menu/collapse/drag
-sequences), then PR `fix/free-placement` to `dev`.
+F6, then F7; then user re-test and PR `fix/free-placement` to `dev`.

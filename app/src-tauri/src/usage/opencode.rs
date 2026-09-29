@@ -10,6 +10,10 @@
 //! Opened read-only (`rusqlite` with the `bundled` feature, no system SQLite
 //! dependency) so the widget can never write to a database a live opencode
 //! process might also have open.
+//!
+//! Sessions outside any project (a cwd under the OS temp dir, or an existing
+//! folder that is not inside a repository; see `resolve_project_root`) are
+//! left out of the totals and the project rows alike, so that invariant holds.
 
 use crate::usage::{
     normalize_project_path, project_display_name, resolve_project_root, AgentUsageReport, CostBasis,
@@ -50,17 +54,25 @@ pub fn read_usage(
     let start_ms = start.timestamp_millis();
     let end_ms = end.timestamp_millis();
 
-    let totals = match read_totals(&conn, start_ms, end_ms) {
+    let mut totals = match read_totals(&conn, start_ms, end_ms) {
         Ok(t) => t,
         Err(e) => return AgentUsageReport::error(AGENT, format!("cannot read session totals: {e}")),
     };
 
-    let projects = match read_projects(&conn, start_ms, end_ms, root_cache) {
+    let (projects, excluded) = match read_projects(&conn, start_ms, end_ms, root_cache) {
         Ok(p) => p,
         Err(e) => return AgentUsageReport::error(AGENT, format!("cannot read per-project totals: {e}")),
     };
 
-    let detail = format!("{} projects", projects.len());
+    // Sessions whose worktree is excluded (see `resolve_project_root`) are
+    // left out of the totals as well as the project rows, so the per-project
+    // split still sums to the totals.
+    subtract_excluded(&mut totals, &excluded);
+
+    let mut detail = format!("{} projects", projects.len());
+    if excluded.entries > 0 {
+        detail.push_str(&format!(" - {} sessions outside any project not counted", excluded.entries));
+    }
     AgentUsageReport::ok(AGENT, totals, projects, detail)
 }
 
@@ -94,12 +106,35 @@ fn read_totals(conn: &Connection, start_ms: i64, end_ms: i64) -> rusqlite::Resul
     })
 }
 
+/// Takes the excluded sessions' counters back out of the SQL totals. With no
+/// session left there is no cost to claim, so the cost goes back to `None`
+/// exactly as `read_totals` reports an empty window.
+fn subtract_excluded(totals: &mut UsageTotals, excluded: &UsageTotals) {
+    if excluded.entries == 0 {
+        return;
+    }
+    totals.input_tokens = totals.input_tokens.saturating_sub(excluded.input_tokens);
+    totals.output_tokens = totals.output_tokens.saturating_sub(excluded.output_tokens);
+    totals.reasoning_tokens = totals.reasoning_tokens.saturating_sub(excluded.reasoning_tokens);
+    totals.cache_read_tokens = totals.cache_read_tokens.saturating_sub(excluded.cache_read_tokens);
+    totals.cache_write_tokens = totals.cache_write_tokens.saturating_sub(excluded.cache_write_tokens);
+    totals.entries = totals.entries.saturating_sub(excluded.entries);
+    if totals.entries == 0 {
+        totals.cost = None;
+        totals.cost_basis = None;
+    } else {
+        totals.cost = Some((totals.cost.unwrap_or(0.0) - excluded.cost.unwrap_or(0.0)).max(0.0));
+    }
+}
+
+/// The per-project rows, plus the totals of the sessions whose worktree was
+/// excluded (zero entries when none was).
 fn read_projects(
     conn: &Connection,
     start_ms: i64,
     end_ms: i64,
     root_cache: &mut ProjectRootCache,
-) -> rusqlite::Result<Vec<ProjectUsage>> {
+) -> rusqlite::Result<(Vec<ProjectUsage>, UsageTotals)> {
     let mut stmt = conn.prepare(
         "SELECT p.worktree,
                 COALESCE(SUM(s.tokens_input), 0),
@@ -136,14 +171,17 @@ fn read_projects(
     // another checkout of the same repo), so this aggregates by resolved
     // root rather than pushing one row per SQL group.
     let mut aggregated: HashMap<String, UsageTotals> = HashMap::new();
+    let mut excluded = UsageTotals::default();
     for row in rows {
         let (worktree, totals) = row?;
         let key = normalize_project_path(&worktree);
         if key.is_empty() {
             continue;
         }
-        let root = resolve_project_root(&key, root_cache);
-        let acc = aggregated.entry(root).or_default();
+        let acc = match resolve_project_root(&key, root_cache) {
+            Some(root) => aggregated.entry(root).or_default(),
+            None => &mut excluded,
+        };
         acc.input_tokens += totals.input_tokens;
         acc.output_tokens += totals.output_tokens;
         acc.reasoning_tokens += totals.reasoning_tokens;
@@ -166,7 +204,7 @@ fn read_projects(
             totals,
         });
     }
-    Ok(out)
+    Ok((out, excluded))
 }
 
 #[cfg(test)]
@@ -278,7 +316,11 @@ mod tests {
         drop(conn);
 
         let (start, end) = window();
-        let report = read_usage(&db_path, start, end, &mut ProjectRootCache::new());
+        let mut cache = ProjectRootCache::with_policy(crate::usage::RootPolicy {
+            temp_dirs: Vec::new(),
+            home: Some(dir.path().to_path_buf()),
+        });
+        let report = read_usage(&db_path, start, end, &mut cache);
         assert_eq!(report.projects.len(), 1, "both worktrees share the same repo root");
         assert_eq!(report.projects[0].totals.output_tokens, 30, "tokens from both worktrees must sum");
         assert_eq!(report.projects[0].totals.cost, Some(3.0), "cost from both worktrees must sum");
@@ -344,6 +386,89 @@ mod tests {
         assert_eq!(report.status, AgentStatus::Ok);
         assert_eq!(report.totals.entries, 0);
         assert_eq!(report.totals.cost, None);
+        assert!(report.projects.is_empty());
+    }
+
+    /// Sessions whose worktree is scratch (under the temp dir) or a folder
+    /// outside any repository are not counted anywhere: not in the project
+    /// rows and not in the totals, so the split still sums to the totals.
+    #[test]
+    fn sessions_outside_any_project_are_left_out_of_totals_and_rows() {
+        use crate::usage::RootPolicy;
+        let dir = tempdir().unwrap();
+        let temp = dir.path().join("Temp");
+        let plain = dir.path().join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let kept = dir.path().join("kept-app").join("app");
+
+        let path = dir.path().join("opencode.db");
+        let conn = make_db(&path);
+        conn.execute(
+            "INSERT INTO project (id, worktree) VALUES ('p1', ?1), ('p2', ?2), ('p3', ?3)",
+            rusqlite::params![
+                kept.to_string_lossy(),
+                temp.join("run-1").to_string_lossy(),
+                plain.to_string_lossy()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, project_id, time_updated, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write)
+             VALUES ('s1', 'p1', ?1, 1.0, 100, 10, 0, 0, 0),
+                    ('s2', 'p2', ?1, 20.0, 100, 500, 0, 0, 0),
+                    ('s3', 'p3', ?1, 30.0, 100, 700, 0, 0, 0)",
+            [ms(2026, 9, 15)],
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut cache = ProjectRootCache::with_policy(RootPolicy {
+            temp_dirs: vec![temp],
+            home: Some(dir.path().to_path_buf()),
+        });
+        let (start, end) = window();
+        let report = read_usage(&path, start, end, &mut cache);
+
+        assert_eq!(report.totals.entries, 1);
+        assert_eq!(report.totals.output_tokens, 10);
+        assert_eq!(report.totals.cost, Some(1.0));
+        assert_eq!(report.projects.len(), 1);
+        assert_eq!(report.projects[0].name, "kept-app");
+        assert!(report.detail.contains("2 sessions outside any project not counted"), "{}", report.detail);
+    }
+
+    /// When every session is excluded there is nothing left to bill: the cost
+    /// goes back to "no value", not a leftover 0.0.
+    #[test]
+    fn when_everything_is_excluded_the_totals_are_empty_with_no_cost() {
+        use crate::usage::RootPolicy;
+        let dir = tempdir().unwrap();
+        let temp = dir.path().join("Temp");
+        let path = dir.path().join("opencode.db");
+        let conn = make_db(&path);
+        conn.execute(
+            "INSERT INTO project (id, worktree) VALUES ('p1', ?1)",
+            [temp.join("run-1").to_string_lossy()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, project_id, time_updated, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write)
+             VALUES ('s1', 'p1', ?1, 2.5, 100, 50, 0, 0, 0)",
+            [ms(2026, 9, 15)],
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut cache = ProjectRootCache::with_policy(RootPolicy {
+            temp_dirs: vec![temp],
+            home: Some(dir.path().to_path_buf()),
+        });
+        let (start, end) = window();
+        let report = read_usage(&path, start, end, &mut cache);
+
+        assert_eq!(report.totals.entries, 0);
+        assert_eq!(report.totals.cost, None);
+        assert_eq!(report.totals.cost_basis, None);
         assert!(report.projects.is_empty());
     }
 }
