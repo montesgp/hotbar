@@ -15,6 +15,7 @@ import {
   type Rect,
   type Size,
 } from "./placement-view";
+import { describePanelOutput, type PanelOutput } from "./panel-output-view";
 import {
   agentFromAction,
   buildPanelViewModel,
@@ -523,9 +524,9 @@ async function showPanelMessage(
   await togglePanel(true);
 }
 
-/** The shared fallback for an item action with no behavior (`omniroute-status`
- * and unknown names): show which id/action fired inside the panel instead of
- * doing nothing. */
+/** The shared fallback for an item action with no behavior (unknown names,
+ * for example the retired `omniroute-status`): show which id/action fired
+ * inside the panel instead of doing nothing. */
 async function showActionPlaceholder(
   id: string,
   action: string,
@@ -533,6 +534,65 @@ async function showActionPlaceholder(
   togglePanel: (open: boolean) => Promise<void>,
 ): Promise<void> {
   await showPanelMessage(`${id}: ${action}`, body, togglePanel);
+}
+
+/**
+ * Opens the panel on a `panel:<program> [args]` action: runs the program once
+ * through `run_panel_command` (which sends back its cleaned-up output, exit
+ * code and timeout state) and shows the text preformatted. Like the usage
+ * panel, it fetches on open only; clicking the cell again closes the panel.
+ * The output is set with `textContent`, never as HTML.
+ */
+async function openCommandPanel(
+  id: string,
+  body: HTMLElement,
+  togglePanel: (open: boolean) => Promise<void>,
+): Promise<void> {
+  const token = ++usageFetchToken;
+  body.replaceChildren();
+  const running = document.createElement("div");
+  running.className = "usage-line usage-line--dim";
+  running.textContent = "Running…";
+  body.appendChild(running);
+  await togglePanel(true);
+
+  let view: HTMLElement;
+  try {
+    const out = await invoke<PanelOutput>("run_panel_command", { id });
+    view = renderCommandOutput(out);
+  } catch (err) {
+    console.error("orbitbar: panel command failed", id, err);
+    view = document.createElement("div");
+    view.className = "usage-line usage-error";
+    view.textContent = String(err);
+  }
+  if (token !== usageFetchToken) return; // superseded by a newer panel action
+  body.replaceChildren(view);
+}
+
+function renderCommandOutput(out: PanelOutput): HTMLElement {
+  const view = describePanelOutput(out);
+  const root = document.createElement("div");
+  root.className = "panel-command";
+
+  const pre = document.createElement("pre");
+  pre.className = view.empty ? "panel-output panel-output--empty" : "panel-output";
+  pre.textContent = view.text;
+  root.appendChild(pre);
+
+  for (const note of view.notes) {
+    const line = document.createElement("div");
+    line.className = "usage-line usage-error";
+    line.textContent = note;
+    root.appendChild(line);
+  }
+  if (view.stderr !== "") {
+    const err = document.createElement("pre");
+    err.className = "panel-output panel-output--stderr";
+    err.textContent = view.stderr;
+    root.appendChild(err);
+  }
+  return root;
 }
 
 /** True for an absolute http:// or https:// URL, the only kinds `open:` accepts.
@@ -1254,8 +1314,16 @@ window.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        // Other item actions (omniroute-status, ...) are wired up separately;
-        // a cell click just demonstrates panel geometry until they land.
+        // `panel:<program> [args]`: run it and show the output in the panel.
+        // The backend re-reads the command from the config by id.
+        if (action.startsWith("panel:")) {
+          activePanelAction = action;
+          await openCommandPanel(target.dataset.id ?? "", body, togglePanel);
+          return;
+        }
+
+        // Any other action has no behavior: a cell click just shows which one
+        // fired, so a typo or a retired name is visible instead of silent.
         activePanelAction = action;
         await showActionPlaceholder(target.dataset.id ?? "", action, body, togglePanel);
       });

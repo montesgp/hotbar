@@ -173,7 +173,7 @@ Item actions:
 | `edit-config` | Opens the bar's menu at the click; "Edit config" there opens `config.json` in your default editor. |
 | `open:<url>` | Opens an `http://` or `https://` URL in your default browser. Other schemes are rejected and the panel shows why. |
 | `run:<program> [args]` | Starts a program with its arguments when you click the cell. See below. |
-| `omniroute-status` | Reserved name. A clicked cell shows a placeholder. |
+| `panel:<program> [args]` | Runs a program when you click the cell and shows what it prints in the panel. See below. |
 
 `run:` splits the text after the colon on whitespace into a program and its
 arguments; double quotes group an argument that contains spaces. Orbitbar
@@ -196,6 +196,21 @@ each `PATHEXT` extension, so `run:code` finds VS Code's `code.cmd` and other
 | Windows | `run:notepad.exe`, or `run:code C:\Projects\my-app` |
 | macOS | `run:open -a Terminal` (`open` is a program on macOS) |
 | Linux | `run:code /home/me/projects/my-app` (there is no shell, so `~` is not expanded: use the full path) |
+
+`panel:` takes the same command line (same splitting, quoting, no shell, same
+program lookup) but shows the program's output in the panel instead of
+detaching it. The program runs once when you click the cell, with no console
+window and no input; Orbitbar waits for it and shows what it printed to
+standard output as plain preformatted text, terminal colors and cursor codes
+removed. If it exits with an error, its standard error and exit code are shown;
+if it has not finished after 10 seconds it is stopped and the panel says so;
+output beyond 64 KiB is cut. Click the cell again, press Escape or use the
+close button to close the panel; click the cell again after closing to run it
+again. It has no refresh timer.
+
+```json
+{ "id": "disk", "glyph": "0x25A4", "label": "disk", "tooltip": "Disk usage", "action": "panel:df -h" }
+```
 
 The default config includes an example cell, `github`, whose action uses
 `open:` to open the Orbitbar repository. It illustrates what a cell can do

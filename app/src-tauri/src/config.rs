@@ -292,7 +292,7 @@ pub fn ensure_pricing_file(path: &PathBuf) -> Result<(), String> {
 }
 
 fn default_items() -> Vec<Item> {
-    let tooltip = "none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | open:<url> | run:<program> [args] | edit-config";
+    let tooltip = "none | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | open:<url> | run:<program> [args] | panel:<program> [args] | edit-config";
     vec![
         Item {
             id: "claude".into(),

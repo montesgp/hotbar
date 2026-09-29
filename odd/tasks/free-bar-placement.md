@@ -92,7 +92,7 @@ epositories\personal`). User decision (option C): **exclude**
       rgba(0,0,0,0.65)` on `.bar`, the panel and the context menu (`styles.css`). Removed all
       three. Route: inline (one file, mechanical). Evidence: `npm run build` ok. Manual, pending:
       Light and Dark over a white window.
-- [ ] **F9 — `panel:` action: show a program's output in the panel.** The `omniroute-status`
+- [x] **F9 — `panel:` action: show a program's output in the panel.** The `omniroute-status`
       cell only shows a placeholder: the action was never implemented in the Tauri app (the
       UP/DOWN + combos view lived in the legacy PowerShell widget). User decision (option B,
       2026-09-29): no OmniRoute code in the product; add a generic `panel:<program> [args]`
@@ -211,6 +211,33 @@ then promote to `main` without a tag unless the user asks for a release.
 - 2026-09-29 user test of the release build (F6, F7): "mejoramos un monton" — flash and project
   rows fixed. New reports: shadow halo (F8) and the `omniroute-status` cell shows only a
   placeholder (the action was never implemented in the Tauri app).
+- F9 done (TDD on, runner `cargo test`). RED: stubs (`unimplemented!`) for `strip_ansi`,
+  `cap_bytes`, `shape_output`, `run_captured` and `panel_command_for_item`, plus 22 new tests:
+  `test result: FAILED. 146 passed; 19 failed` (17 `panel::tests::*`, 2 `launch::tests::*`;
+  the third launch test passed on the stub's `Err`, by design of the case). GREEN: `165 passed;
+  0 failed; 1 ignored`, including real-process tests (output + stderr + exit code, timeout kill
+  with a lingering grandchild, missing program, output cap). Clippy clean; `npx tsc --noEmit`
+  clean; `npm run build` ok.
+  Design: `launch::command_for_item_with_prefix` serves both `run:` and `panel:` (same parsing,
+  no shell, id looked up in the backend's config; the prefixes never cross) and
+  `launch::resolved_program` (PATH/PATHEXT lookup) is shared with `spawn`. New `panel.rs`:
+  `run_captured` (stdin null, piped stdout/stderr read on threads, `CREATE_NO_WINDOW`, 10 s
+  timeout then kill, 64 KiB cap per stream, bounded 1 s wait for pipes a grandchild may hold
+  open), `strip_ansi` (CSI, OSC, two-char escapes), `cap_bytes` (no split characters),
+  `shape_output`. Command `run_panel_command(id)` is async (spawn_blocking). Frontend:
+  `openCommandPanel` shows "Running...", then `<pre class="panel-output">` (textContent, never
+  HTML), notes for timeout / non-zero exit / truncation and stderr; same-cell click closes;
+  unknown actions keep the placeholder. `panel-output-view.ts` holds the DOM-free message logic
+  (untested, no runner). `config.rs` tooltip list: `omniroute-status` removed, `panel:` added.
+  Docs: README (actions table + `panel:` paragraph), `extensions/README.md` (OmniRoute status
+  through `panel:`), `docs/architecture.md`.
+  Script check: `status-dashboard.ps1 -Once` renders one frame and `exit 0` without waiting for a
+  key (ran it: ~1.5 s, output on stdout, only ESC[H/K/J codes, which are stripped). Without
+  `-Once` it would wait up to `-MaxSeconds` (300) and the 10 s timeout would kill it.
+  Item for the user: `panel:powershell -NoProfile -ExecutionPolicy Bypass -File
+  C:/repositories/personal/orbitbar/extensions/herdr/scripts/status-dashboard.ps1 -Once`
+  (forward slashes are accepted by PowerShell and survive the whitespace splitting; wrap the
+  path in double quotes if it has spaces; change `omniroute-status` in the item's `action`).
 
 ## Next step
 

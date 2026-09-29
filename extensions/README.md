@@ -41,6 +41,31 @@ open status popup) and one popup pane, each backed by a PowerShell script in
 
 Herdr loads the plugin once the folder is registered.
 
+### OmniRoute status in the Orbitbar panel
+
+Orbitbar has no OmniRoute code. To see the gateway status in its panel, point a
+cell at the Herdr status script with the generic `panel:` action, which runs a
+program and shows its output. `-Once` makes the script print one frame and
+exit, which is what `panel:` needs (it does not wait for a key). Add an item to
+`config.json` with the path of your checkout (forward slashes work in
+PowerShell, and Orbitbar splits the line on whitespace, so a path with spaces
+must be wrapped in double quotes):
+
+```json
+{
+  "id": "omniroute",
+  "glyph": "0x25CE",
+  "label": "omniroute",
+  "tooltip": "OmniRoute gateway status",
+  "action": "panel:powershell -NoProfile -ExecutionPolicy Bypass -File C:/path/to/orbitbar/extensions/herdr/scripts/status-dashboard.ps1 -Once"
+}
+```
+
+Then use **Reload config** from the bar's menu. Clicking the cell runs the
+script (no console window, 10 second limit) and shows the gateway state and
+combos. The script's last lines mention a popup that closes with `q`; ignore
+them, that text is for the Herdr popup. Windows only, like the script.
+
 ## OmniRoute
 
 [`omniroute/omniroute.ts`](omniroute/omniroute.ts) is an extension for the pi

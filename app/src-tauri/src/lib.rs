@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod config;
 mod launch;
+mod panel;
 mod placement;
 mod usage;
 
@@ -86,6 +87,20 @@ fn ensure_pricing_file(app: tauri::AppHandle) -> Result<String, String> {
 fn run_command(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let cfg = config::load(&app)?;
     launch::spawn(&launch::command_for_item(&cfg.items, &id)?)
+}
+
+/// Runs a cell's `panel:<program> [args]` action and returns what it printed,
+/// for the panel to show. Like `run_command`, the frontend sends only the item
+/// id and the command line comes from the config loaded here, so this cannot
+/// run an arbitrary string. It runs off the main thread, with no console
+/// window, a closed stdin, a size cap and a hard timeout: see `panel`.
+#[tauri::command]
+async fn run_panel_command(app: tauri::AppHandle, id: String) -> Result<panel::PanelOutput, String> {
+    let cfg = config::load(&app)?;
+    let line = launch::panel_command_for_item(&cfg.items, &id)?;
+    tauri::async_runtime::spawn_blocking(move || panel::run_captured(&line, panel::TIMEOUT, panel::MAX_OUTPUT_BYTES))
+        .await
+        .map_err(|e| format!("panel command task panicked: {e}"))?
 }
 
 /// Exits the whole process, called by the context menu's "Quit Orbitbar".
@@ -358,6 +373,7 @@ pub fn run() {
             get_config_path,
             ensure_pricing_file,
             run_command,
+            run_panel_command,
             place_window,
             plan_window
         ])

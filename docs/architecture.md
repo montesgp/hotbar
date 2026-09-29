@@ -60,7 +60,8 @@ through Tauri's `invoke()` IPC.
 | --- | --- | --- |
 | Window/UI | `app/src/main.ts`, `app/src/styles.css`, `app/index.html` | Crescent bar geometry, collapse/expand, drag, theme application, item clicks, panel and context-menu toggling |
 | View-model | `app/src/usage-view.ts` | Pure functions that turn a `UsageSnapshot` into rendered lines — no DOM, unit-testable in isolation |
-| Tauri commands | `app/src-tauri/src/lib.rs` | `get_config`, `save_config`, `get_usage`, `get_config_path`, `ensure_pricing_file`, `run_command`, `quit_app`, `place_window`; window placement and autostart reconciliation on launch |
+| Tauri commands | `app/src-tauri/src/lib.rs` | `get_config`, `save_config`, `get_usage`, `get_config_path`, `ensure_pricing_file`, `run_command`, `run_panel_command`, `quit_app`, `place_window`, `plan_window`; window placement and autostart reconciliation on launch |
+| Panel commands | `app/src-tauri/src/panel.rs`, `app/src-tauri/src/launch.rs` | `panel:<program> [args]` items: `launch.rs` parses and resolves the command exactly like `run:`; `panel.rs` runs it with no console window, closed stdin, a 10 s timeout and a 64 KiB cap, strips terminal escapes and returns text, stderr, exit code and a timeout flag. The frontend shows it as preformatted text (`panel-output-view.ts`) |
 | Placement | `app/src-tauri/src/placement.rs` | Pure window-placement rules: grow toward the side with room, clamp into the work area, collapse anchoring, restoring a saved position |
 | Launch actions | `app/src-tauri/src/launch.rs` | `run:<program> [args]`: parses the command line (whitespace-separated, double quotes group) and spawns the program directly, with no shell. `open:<url>` is handled in the frontend through the opener plugin, scoped to `http://` and `https://` in `capabilities/default.json` |
 | Config | `app/src-tauri/src/config.rs` | Schema (`AppConfig`), per-OS config dir resolution, load/save, the `dark` and `light` theme palettes |

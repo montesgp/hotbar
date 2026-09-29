@@ -234,6 +234,35 @@ body.moon .bar {
  * numbers and status text come from app/src/usage-view.ts (status, totals,
  * cost, top projects).
  */
+/*
+ * `panel:<program>` output: preformatted monospace text that keeps its line
+ * breaks and column alignment, themed with the panel tokens. Long lines scroll
+ * sideways inside the block instead of wrapping (wrapping breaks alignment).
+ */
+.panel-output {
+  margin: 0;
+  padding: 0 0 4px;
+  font-family: "Cascadia Mono", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+  font-size: var(--ob-font-size);
+  line-height: 1.35;
+  color: var(--ob-text);
+  white-space: pre;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ob-text-dim) transparent;
+}
+
+.panel-output--empty {
+  color: var(--ob-text-dim);
+}
+
+.panel-output--stderr {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--ob-bar-border);
+  color: var(--ob-hover-fg);
+}
+
 .usage-window-row {
   margin-bottom: 6px;
 }
