@@ -2,10 +2,10 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Orbitbar is a small floating bar that stays on top of your desktop and shows
-the token usage and cost of your local AI coding agents (Claude Code, Codex
-and OpenCode): overall, per project, and for the time window you pick. It
-runs on Windows, macOS and Linux.
+Orbitbar is a small bar docked to the edge of your screen, always visible
+above your other windows. It shows the token usage and cost of your local AI
+coding agents (Claude Code, Codex and OpenCode): overall, per project, and
+for the time window you pick. It runs on Windows, macOS and Linux.
 
 > Screenshot: coming soon.
 
@@ -24,56 +24,65 @@ runs on Windows, macOS and Linux.
 - **Light and dark themes**, switched live from the bar's menu.
 - **One JSON config file** for items, theme, autostart and placement.
 
-## Quick start
+## Download and install
 
-Orbitbar is built from source with Node.js and a Rust toolchain. Install the
-prerequisites for your OS (below), then:
+Get the latest installers from the
+[Releases page](https://github.com/montesgp/orbitbar/releases/latest) and pick
+the file for your OS:
 
-```sh
-cd app
-npm install
-npm run tauri build   # installer or app bundle for the current OS
-```
-
-Use `npm run tauri dev` instead to run with hot reload while you work on it.
-
-## Install and run on your OS
+| OS | File to pick |
+| --- | --- |
+| Windows | `Orbitbar_<version>_x64-setup.exe` (recommended) or `Orbitbar_<version>_x64_en-US.msi` |
+| macOS | `Orbitbar_<version>_universal.dmg` (Apple silicon and Intel) |
+| Linux | `Orbitbar_<version>_amd64.AppImage` (run it directly), `.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE) |
 
 Agents are optional: Orbitbar reads whichever of Claude Code, Codex and
 OpenCode are installed and reports the others as not installed. SQLite is
-compiled into the binary, so there is nothing else to install on any OS.
+compiled into the binary, so there is nothing else to install.
 
-### Windows
+### First run: unsigned installers
 
-| | |
+The installers are not code-signed, so each OS asks for confirmation the
+first time you open them:
+
+- **Windows:** SmartScreen shows "Windows protected your PC". Choose
+  **More info**, then **Run anyway**.
+- **macOS:** Gatekeeper blocks the app on first launch. Right-click
+  `Orbitbar.app` and choose **Open**, then confirm; or open **System Settings
+  > Privacy & Security** and choose **Open Anyway**.
+- **Linux:** make the AppImage executable and run it:
+  `chmod +x Orbitbar_*.AppImage && ./Orbitbar_*.AppImage`. The `.deb` and
+  `.rpm` packages install with your package manager
+  (`sudo apt install ./Orbitbar_*.deb`, `sudo dnf install ./Orbitbar_*.rpm`).
+
+### Per-OS details
+
+| | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Runtime | WebView2, preinstalled on Windows 10 and 11 | WKWebView, part of macOS | WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`), installed as a dependency by the `.deb` and `.rpm`; the AppImage expects it on the system |
+| Config | `%APPDATA%\com.orbitbar.app\config.json` | `~/Library/Application Support/com.orbitbar.app/config.json` | `~/.config/com.orbitbar.app/config.json` |
+| Autostart | A per-user Registry Run entry | A LaunchAgent | An XDG autostart `.desktop` entry |
+
+### Platform status
+
+| OS | Status |
 | --- | --- |
-| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/) with the MSVC toolchain (`rustup default stable-msvc`), and the Visual Studio C++ Build Tools ("Desktop development with C++") |
-| Runtime | WebView2, which ships with Windows 10 and 11 |
-| Artifacts | NSIS installer (`*-setup.exe`) and `.msi` |
-| Config | `%APPDATA%\com.orbitbar.app\config.json` |
-| Autostart | A per-user Registry Run entry |
+| Windows | Verified manually. Built by CI. |
+| macOS | Built by CI. Not yet verified manually. |
+| Linux | Built by CI. Not yet verified manually. |
 
-### macOS
+## Build from source
 
-| | |
+For contributors and anyone who wants to build their own binary. Install
+Node.js, [Rust](https://rustup.rs/) and the build prerequisites for your OS:
+
+| OS | Build prerequisites |
 | --- | --- |
-| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/), and the Xcode Command Line Tools (`xcode-select --install`) |
-| Runtime | WKWebView, part of macOS |
-| Artifacts | `Orbitbar.app` and a `.dmg` |
-| Config | `~/Library/Application Support/com.orbitbar.app/config.json` |
-| Autostart | A LaunchAgent |
+| Windows | [Node.js](https://nodejs.org/), Rust with the MSVC toolchain (`rustup default stable-msvc`), and the Visual Studio C++ Build Tools ("Desktop development with C++") |
+| macOS | [Node.js](https://nodejs.org/), Rust, and the Xcode Command Line Tools (`xcode-select --install`) |
+| Linux | [Node.js](https://nodejs.org/), Rust, and the WebKitGTK 4.1 development packages (below) |
 
-### Linux
-
-| | |
-| --- | --- |
-| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/), and the WebKitGTK 4.1 development packages (see below) |
-| Runtime | WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu) |
-| Artifacts | `.deb`, `.rpm` and `.AppImage` |
-| Config | `~/.config/com.orbitbar.app/config.json` |
-| Autostart | An XDG autostart `.desktop` entry |
-
-On Debian and Ubuntu, install the build dependencies with:
+On Debian and Ubuntu, install the Linux build dependencies with:
 
 ```sh
 sudo apt update
@@ -84,20 +93,21 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
 For Fedora, Arch and other distributions use the package list in the
 [Tauri prerequisites guide](https://tauri.app/start/prerequisites/).
 
-### Where the build output goes
+Then:
+
+```sh
+cd app
+npm ci
+npm run tauri build   # installer or app bundle for the current OS
+```
+
+Use `npm run tauri dev` instead to run with hot reload while you work on it.
 
 `npm run tauri build` writes the installers under
 `app/src-tauri/target/release/bundle/`, in one folder per format
 (`nsis`, `msi`, `dmg`, `macos`, `deb`, `rpm`, `appimage`). Each OS produces
-its own formats; build on the OS you are targeting.
-
-### Platform status
-
-| OS | Status |
-| --- | --- |
-| Windows | Built and tested. |
-| macOS | Supported through Tauri's bundler; CI verification is planned. |
-| Linux | Supported through Tauri's bundler; CI verification is planned. |
+its own formats; build on the OS you are targeting. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the checks and the release process.
 
 ## Using Orbitbar
 
@@ -132,8 +142,8 @@ api-service                 30,900        ~$7.94
 
 ## Configuration
 
-Orbitbar creates `config.json` with defaults on first launch (paths per OS
-above) and rewrites it when you change a setting from the app.
+Orbitbar creates `config.json` with defaults on first launch (paths per OS in
+[Per-OS details](#per-os-details)) and rewrites it when you change a setting from the app.
 
 | Field | Meaning |
 | --- | --- |
