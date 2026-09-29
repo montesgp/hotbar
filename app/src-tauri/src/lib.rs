@@ -54,6 +54,16 @@ async fn get_usage(app: tauri::AppHandle, window: usage::TimeWindow) -> Result<u
     .map_err(|e| format!("usage task panicked: {e}"))?
 }
 
+/// Exits the whole process, called by the context menu's "Quit Orbitbar".
+/// `app.exit(0)` tears the app down through Tauri's own shutdown path
+/// (closes every window, runs `on_exit` if one is ever added); a bare
+/// `window.close()` on the frontend only removes the window and leaves the
+/// process running in the background, which is the bug this command fixes.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 /// Resolve the monitor named in config ("primary" or a device name). Falls
 /// back to the current monitor when the persisted name no longer exists.
 fn resolve_monitor(
@@ -173,7 +183,7 @@ pub fn run() {
             position_right_center(&window, &monitor, cfg.margin, size)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_config, save_config, get_usage])
+        .invoke_handler(tauri::generate_handler![get_config, save_config, get_usage, quit_app])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

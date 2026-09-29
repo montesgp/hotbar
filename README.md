@@ -78,6 +78,13 @@ config editor, and an autostart toggle:
 A hand-edited config that fails to parse never bricks the bar: the broken
 file is renamed to `config.json.invalid` and the app restarts on defaults.
 
+### Controls
+
+Right-click the bar (or the collapsed tab) for a menu: open config.json or
+pricing.json in your editor, collapse/expand, reload config.json without
+restarting, or quit. Escape closes the menu, same as it closes the usage
+panel; clicking outside it closes it too.
+
 ### Usage panel
 
 The panel selector switches the window; totals and a per-project breakdown

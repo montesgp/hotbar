@@ -274,6 +274,62 @@ body.moon .bar {
 }
 
 /*
+ * Right-click context menu — a card styled with the same --ob-* tokens as
+ * .panel, positioned by main.ts (openContextMenu/positionContextMenu) inside
+ * the extra width the window grows for it. `position: fixed` puts it
+ * relative to the window's own content area (there is no browser chrome),
+ * so `left` is just an inset from the window's left edge, not the bar's.
+ */
+.context-menu {
+  position: fixed;
+  left: 6px;
+  width: 158px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--ob-panel);
+  border: 1px solid var(--ob-bar-border);
+  border-radius: var(--ob-radius-handle);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  z-index: 10;
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu-item {
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--ob-radius-handle);
+  background: transparent;
+  color: var(--ob-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.context-menu-item:hover {
+  background: var(--ob-hover-bg);
+  color: var(--ob-hover-fg);
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  border: none;
+  /* --ob-bar-border equals --ob-panel in every shipped theme, which would
+   * make the separator invisible against the menu's own background; dim
+   * text keeps it visible without a theme-specific override. */
+  background: var(--ob-text-dim);
+  opacity: 0.35;
+}
+
+/*
  * The bar column: handle on top, then the cells. The 3px right margin is the
  * WPF `Margin="0,0,3,0"`, which keeps the glyph column off the flat edge.
  */

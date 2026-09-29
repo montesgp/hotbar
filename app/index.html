@@ -49,5 +49,20 @@
         &#8249;
       </button>
     </main>
+
+    <!--
+      Right-click menu (bar + collapsed tab). Rendered by main.ts, styled
+      with the same --ob-* tokens as .panel — the OS/WebView2 context menu is
+      suppressed app-wide, this is the only one. `position: fixed` in
+      styles.css so it can sit in the extra width the window grows for it
+      instead of being clipped by the bar's own crescent overflow.
+    -->
+    <div
+      id="context-menu"
+      class="context-menu"
+      role="menu"
+      hidden
+      data-tauri-drag-region="false"
+    ></div>
   </body>
 </html>
