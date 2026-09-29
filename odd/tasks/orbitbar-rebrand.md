@@ -155,7 +155,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 - [ ] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar` (after the folder
       rename; verify the supported mechanism first).
 
-- [ ] **O10 — Settings cell left-click opens the menu** (user, 2026-09-29): left click on the
+- [x] **O10 — Settings cell left-click opens the menu** (user, 2026-09-29): left click on the
   settings (`edit-config`) cell opens the same menu right-click opens today (Edit config,
   Open pricing, Reload config, Quit...); "Edit config" stays reachable from that menu.
   Route: delegated writer (main.ts + docs). Check: tsc, build, manual click.
@@ -163,7 +163,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   window selector changes the window only while the panel is open; `usageWindow` is no longer
   persisted/honored. Route: delegated writer (config.rs, usage/mod.rs, main.ts). Check:
   cargo test (RED first on the default), tsc.
-- [ ] **O12 — Themes: only `light` and `dark`** (user, 2026-09-29). `dark` = former `classic`
+- [x] **O12 — Themes: only `light` and `dark`** (user, 2026-09-29). `dark` = former `classic`
   palette; new `light` palette with the SAME half-moon shape (only colors change); the flat
   `dark` and the name `classic` are removed; a stored `"classic"` (or any unknown) resolves to
   `dark`; default `dark`. Settings menu gets a Light / Dark choice that persists and applies
@@ -325,6 +325,26 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   `config::tests::usage_window_is_not_persisted` (key present in serialized config) → GREEN.
   Checks: `cargo test` 79/79 (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean,
   `npm run build` OK. Not visually inspected.
+- 2026-09-29: O12 done, commit `38624de`. Themes are `dark` (former `classic`, values unchanged)
+  and `light` (same shape tokens; colors bg `#F4F4F8`, panel `#F0F0F5`, text `#22222B`, textDim
+  `#62626F`, hoverBg `#F2E6C4`, hoverFg `#8A5A00`, barBorder `#C9C9D6`, gradient `#FFFFFF` ->
+  `#E6E6EE`). The flat dark palette and the name `classic` are gone from code and docs (a
+  stored `classic`/unknown resolves to `dark`); default `dark`. The menu has Light / Dark
+  entries with a check on the resolved palette name; selecting saves and reuses `reloadConfig`
+  to apply live. CSS already reads every color from `--ob-*` tokens; only the `rgba(0,0,0,.65)`
+  box-shadows stay fixed (neutral). Menu height constants raised (246 / 270 collapsed).
+  RED: 7 tests failed (`classic_and_unknown_themes_resolve_to_dark`,
+  `dark_keeps_the_former_classic_colors`, `light_shares_every_shape_token_with_dark`,
+  `the_default_theme_is_dark`, `every_embedded_palette_parses`,
+  `moon_geometry_matches_the_bar_in_every_theme`, `cell_radius_is_a_circle_not_a_rounded_square`)
+  -> GREEN. Refactor caught a real bug: building `ThemePalette::default()` from the embedded
+  JSON recursed through serde's container default (stack overflow), so `Default` stays literal
+  and a test pins it to `PALETTE_DARK`. Checks: `cargo test` 82/82 (1 ignored), clippy
+  `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Not visually inspected.
+- 2026-09-29: O10 done, commit `4b7fb14`. Left click on the `edit-config` cell calls the same `showContextMenu`
+  the right click uses, anchored at the click; the entry is now labeled "Edit config" and still
+  opens config.json. Same checks as above (no Rust behavior change; tooltip text only). Not
+  visually inspected; manual click pending.
 
 ## Next step
 
