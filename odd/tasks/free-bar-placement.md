@@ -239,7 +239,13 @@ then promote to `main` without a tag unless the user asks for a release.
   (forward slashes are accepted by PowerShell and survive the whitespace splitting; wrap the
   path in double quotes if it has spaces; change `omniroute-status` in the item's `action`).
 
+- 2026-09-29 user test of the release build (F8, F9 and a re-check of F1–F7): "Todo funciona".
+  OmniRoute cell uses `panel:` with `status-dashboard.ps1 -Once` (user config, backup
+  `config.json.bak-2026-09-29`). Review: F1–F4 approved; later candidates declined by the user.
+
 ## Next step
 
-F9; then rebuild the release exe for the user (F7, F8, F9 manual checks) and PR
-`fix/free-placement` to `dev`.
+PR `fix/free-placement` → `dev`, then promote `dev` → `main` without a tag unless a
+release is requested. Follow-ups (not in this PR): frontend test runner for the pure view
+modules; test for the `place_window` monitor fallback; align the single-instance `cfg`
+conditions; decide whether "Reload config" applies an edited `position`.
