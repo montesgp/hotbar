@@ -200,7 +200,7 @@ function setCollapsedUi(collapsed: boolean): void {
   if (collapse) {
     // The chevron points where the motion goes: collapsing shrinks the bar
     // toward the screen edge (right), expanding grows it into the desktop (left).
-    collapse.innerHTML = collapsed ? "&#8248;" : "&#8250;";
+    collapse.innerHTML = collapsed ? "&#8249;" : "&#8250;";
   }
 }
 
