@@ -50,7 +50,8 @@ short and describe the "why" in the body when it is not obvious.
 
 ## Reporting an issue
 
-Open a GitHub issue with:
+Open a GitHub issue with the **Bug report** or **Feature request** form. A bug
+report asks for:
 
 - OS and version (Windows, macOS or Linux, with the build number if relevant).
 - Orbitbar version, or the commit you built from.

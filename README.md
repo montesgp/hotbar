@@ -41,6 +41,11 @@ Agents are optional: Orbitbar reads whichever of Claude Code, Codex and
 OpenCode are installed and reports the others as not installed. SQLite is
 compiled into the binary, so there is nothing else to install.
 
+**Updating:** Orbitbar does not update itself yet. To move to a newer
+version, close the bar and run the installer from the latest release; your
+`config.json` is kept. The [roadmap](#roadmap) tracks in-app update
+notifications.
+
 ### First run: unsigned installers
 
 The installers are not code-signed, so each OS asks for confirmation the
@@ -260,6 +265,13 @@ row named after the folder that is gone.
 Orbitbar has optional extensions for the Herdr TUI and the
 OmniRoute gateway. They are off by default and add no requirements to the
 bar. See [extensions/README.md](extensions/README.md).
+
+## Roadmap
+
+Planned work is tracked as GitHub issues labeled
+[`enhancement`](https://github.com/montesgp/orbitbar/issues?q=is%3Aissue+label%3Aenhancement).
+Next up: an update notice in the bar's menu when a newer release is
+available, with a link to it, and later an in-app update.
 
 ## Contributing
 
