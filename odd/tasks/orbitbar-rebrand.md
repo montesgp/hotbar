@@ -224,6 +224,22 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   updates in place, and give the menu a short fade/slide open and close (~120-180 ms) so it
   feels smooth while staying fast. Route: same writer. Check: tsc, build; visual check by user.
 
+- [ ] **O19b — Menu flash still visible** (user, 2026-09-29, after O17 and O19 on the real
+  release build: "el pantallazo no se quita"). The atomic `SetWindowPos`, in-place updates
+  and fade did not remove it, so resizing the transparent WebView2 window itself is the
+  suspect. Proposed next step (pending user decision): render the menu (and later the usage
+  panel) in a separate pre-created always-on-top window shown beside the bar, so opening,
+  selecting and closing never resize the bar's window.
+- [x] **O20 — Leaner build output** (user, 2026-09-29: "eliminar tantas carpetas en los builds").
+  `crate-type = ["rlib"]` (staticlib/cdylib are only for iOS/Android and left an extra
+  `.dll/.lib/.pdb` set per build), `strip = true` already in the release profile (duplicate
+  removed), package description/authors fixed. `app/README.md` gains "Build output": `target/`
+  is Cargo's cache, only `release/bundle/` and the release binary are meant to be used,
+  install from the installer so `cargo clean` is safe, and always build releases through the
+  Tauri CLI. Route: direct inline. Checks: `cargo test` 102/102 (1 ignored), clippy clean,
+  `npx tauri build --no-bundle` OK. Stale `orbitbar_lib.dll/.lib/.pdb` from older builds stay
+  until `cargo clean`.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
