@@ -55,7 +55,7 @@ is test-first; the frontend only applies the result.
 - [x] **F1 — Single instance.** Register `tauri-plugin-single-instance` first in the
       builder; a second launch exits and shows/unminimizes/focuses the existing window.
       Checks: CI set; manual — launch the release exe twice, one bar.
-- [ ] **F2 — Pure placement logic (Rust, test-first).** Given the bar's rect, the extra
+- [x] **F2 — Pure placement logic (Rust, test-first).** Given the bar's rect, the extra
       size the menu/panel needs, and the monitor work area, return the window rect and the
       side (left/right) the extra content goes on, keeping the bar's on-screen position
       fixed and everything inside the work area. Also the restore rule for a saved position
@@ -89,9 +89,20 @@ then promote to `main` without a tag unless the user asks for a release.
 - 2026-09-29: explored; causes confirmed in code (see Problem).
 - F1 done (route: delegated writer). `tauri-plugin-single-instance` 2.5.0 registered first
   (desktop only). `npx tsc --noEmit`: clean; `npm run build`: ok; `cargo test`: 113 passed;
-  `cargo clippy --all-targets -- -D warnings`: clean. Commit: see git log (`fix: allow only one running Orbitbar`).
+  `cargo clippy --all-targets -- -D warnings`: clean. Commit `17f834e`.
   Manual, pending: launch the release exe twice, one bar, the second focuses the first.
+- F2 done (TDD on, runner `cargo test`). RED: `cargo test` with `unimplemented!()` stubs and 20 new
+  tests: `test result: FAILED. 113 passed; 20 failed` (all 20 `placement::tests::*`, panic
+  `not implemented`); config tests failed to compile (`no field position`, `Position` missing).
+  GREEN: `135 passed; 0 failed; 1 ignored`. `cargo clippy --all-targets -- -D warnings`: clean;
+  `npx tsc --noEmit` clean; `npm run build` ok.
+  Design: new `placement.rs` (pure `clamp_into`, `pick_area`, `restore_bar`, `anchor_resize`,
+  `place`); command `place_window({bar, barWidth, barHeight, extraWidth, extraHeight})` returns
+  `{bar, window, side, barOffset, monitor}`; uses `Monitor::work_area()` (taskbar excluded).
+  Config: optional `position: {x, y}` (skipped when unset). Collapse/expand anchoring: vertical
+  center kept, horizontal edge nearest the monitor edge kept. `snap_window` is kept only until F3
+  switches the frontend, so this commit still runs.
 
 ## Next step
 
-F2.
+F3.
