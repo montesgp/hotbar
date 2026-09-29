@@ -1,6 +1,5 @@
 //! Opencode usage reader: SQLite `session` table at
-//! `~/.local/share/opencode/opencode.db`. Ported from `Get-OpenCodeAgentHistory`
-//! in `legacy/windows-widget/lib/Get-AgentUsage.ps1`.
+//! `~/.local/share/opencode/opencode.db`.
 //!
 //! The `session` table is already consolidated per session (unlike the
 //! claude/codex jsonl stores), so this is two indexed `SELECT`s: one totals
@@ -13,16 +12,26 @@
 //! process might also have open.
 
 use crate::usage::{
-    normalize_project_path, project_display_name, AgentUsageReport, CostBasis, ProjectUsage, UsageTotals,
+    normalize_project_path, project_display_name, resolve_project_root, AgentUsageReport, CostBasis,
+    ProjectRootCache, ProjectUsage, UsageTotals,
 };
 use chrono::{DateTime, Local};
 use rusqlite::{Connection, OpenFlags};
+use std::collections::HashMap;
 use std::path::Path;
 
 const AGENT: &str = "opencode";
 
 /// Reads window usage from the opencode SQLite store at `db_path`.
-pub fn read_usage(db_path: &Path, start: DateTime<Local>, end: DateTime<Local>) -> AgentUsageReport {
+/// Per-project totals are keyed by resolved project root (see
+/// `resolve_project_root`), not the raw `project.worktree` path, so two
+/// worktrees inside the same repository merge into one row.
+pub fn read_usage(
+    db_path: &Path,
+    start: DateTime<Local>,
+    end: DateTime<Local>,
+    root_cache: &mut ProjectRootCache,
+) -> AgentUsageReport {
     if !db_path.exists() {
         return AgentUsageReport::not_installed(AGENT, format!("database not found: {}", db_path.display()));
     }
@@ -46,7 +55,7 @@ pub fn read_usage(db_path: &Path, start: DateTime<Local>, end: DateTime<Local>) 
         Err(e) => return AgentUsageReport::error(AGENT, format!("cannot read session totals: {e}")),
     };
 
-    let projects = match read_projects(&conn, start_ms, end_ms) {
+    let projects = match read_projects(&conn, start_ms, end_ms, root_cache) {
         Ok(p) => p,
         Err(e) => return AgentUsageReport::error(AGENT, format!("cannot read per-project totals: {e}")),
     };
@@ -85,7 +94,12 @@ fn read_totals(conn: &Connection, start_ms: i64, end_ms: i64) -> rusqlite::Resul
     })
 }
 
-fn read_projects(conn: &Connection, start_ms: i64, end_ms: i64) -> rusqlite::Result<Vec<ProjectUsage>> {
+fn read_projects(
+    conn: &Connection,
+    start_ms: i64,
+    end_ms: i64,
+    root_cache: &mut ProjectRootCache,
+) -> rusqlite::Result<Vec<ProjectUsage>> {
     let mut stmt = conn.prepare(
         "SELECT p.worktree,
                 COALESCE(SUM(s.tokens_input), 0),
@@ -118,16 +132,36 @@ fn read_projects(conn: &Connection, start_ms: i64, end_ms: i64) -> rusqlite::Res
         ))
     })?;
 
-    let mut out = Vec::new();
+    // Several worktrees can resolve to the same project root (a subfolder,
+    // another checkout of the same repo), so this aggregates by resolved
+    // root rather than pushing one row per SQL group.
+    let mut aggregated: HashMap<String, UsageTotals> = HashMap::new();
     for row in rows {
         let (worktree, totals) = row?;
         let key = normalize_project_path(&worktree);
         if key.is_empty() {
             continue;
         }
+        let root = resolve_project_root(&key, root_cache);
+        let acc = aggregated.entry(root).or_default();
+        acc.input_tokens += totals.input_tokens;
+        acc.output_tokens += totals.output_tokens;
+        acc.reasoning_tokens += totals.reasoning_tokens;
+        acc.cache_read_tokens += totals.cache_read_tokens;
+        acc.cache_write_tokens += totals.cache_write_tokens;
+        acc.entries += totals.entries;
+        // Every row here came from a matched session, so `cost`/`cost_basis`
+        // are always `Some` (see the query above) - summing the amounts and
+        // re-asserting `Reported` keeps that same guarantee on the merged row.
+        acc.cost = Some(acc.cost.unwrap_or(0.0) + totals.cost.unwrap_or(0.0));
+        acc.cost_basis = Some(CostBasis::Reported);
+    }
+
+    let mut out = Vec::with_capacity(aggregated.len());
+    for (root, totals) in aggregated {
         out.push(ProjectUsage {
-            name: project_display_name(&key),
-            path: key,
+            name: project_display_name(&root),
+            path: root,
             model: String::new(),
             totals,
         });
@@ -178,7 +212,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let missing = dir.path().join("opencode.db");
         let (start, end) = window();
-        let report = read_usage(&missing, start, end);
+        let report = read_usage(&missing, start, end, &mut ProjectRootCache::new());
         assert_eq!(report.status, AgentStatus::NotInstalled);
     }
 
@@ -201,7 +235,7 @@ mod tests {
         drop(conn);
 
         let (start, end) = window();
-        let report = read_usage(&path, start, end);
+        let report = read_usage(&path, start, end, &mut ProjectRootCache::new());
         assert_eq!(report.status, AgentStatus::Ok);
         assert_eq!(report.totals.cost, Some(1.2345));
         assert_eq!(report.totals.output_tokens, 500);
@@ -212,6 +246,43 @@ mod tests {
             Some(CostBasis::Reported),
             "opencode's own cost column is a reported bill, never an estimate"
         );
+    }
+
+    /// Two different worktrees inside the same repository (the repo root and
+    /// a subfolder) must aggregate into one project row instead of two, once
+    /// the resolved project root is used as the bucket key.
+    #[test]
+    fn two_worktrees_in_the_same_repo_merge_into_one_project_row() {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path().join("repo");
+        std::fs::create_dir_all(repo_root.join(".git")).unwrap();
+        let subfolder = repo_root.join("app").join("src-tauri");
+        std::fs::create_dir_all(&subfolder).unwrap();
+        let root_worktree = repo_root.to_string_lossy().replace('\\', "/");
+        let sub_worktree = subfolder.to_string_lossy().replace('\\', "/");
+
+        let db_path = dir.path().join("opencode.db");
+        let conn = make_db(&db_path);
+        conn.execute(
+            "INSERT INTO project (id, worktree) VALUES ('p1', ?1), ('p2', ?2)",
+            rusqlite::params![root_worktree, sub_worktree],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, project_id, time_updated, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write)
+             VALUES ('s1', 'p1', ?1, 1.0, 100, 10, 0, 0, 0),
+                    ('s2', 'p2', ?1, 2.0, 100, 20, 0, 0, 0)",
+            [ms(2026, 9, 15)],
+        )
+        .unwrap();
+        drop(conn);
+
+        let (start, end) = window();
+        let report = read_usage(&db_path, start, end, &mut ProjectRootCache::new());
+        assert_eq!(report.projects.len(), 1, "both worktrees share the same repo root");
+        assert_eq!(report.projects[0].totals.output_tokens, 30, "tokens from both worktrees must sum");
+        assert_eq!(report.projects[0].totals.cost, Some(3.0), "cost from both worktrees must sum");
+        assert_eq!(report.projects[0].name, "repo");
     }
 
     #[test]
@@ -233,7 +304,7 @@ mod tests {
         drop(conn);
 
         let (start, end) = window();
-        let report = read_usage(&path, start, end);
+        let report = read_usage(&path, start, end, &mut ProjectRootCache::new());
         assert_eq!(report.totals.cost, Some(0.0), "a real zero must be reported, not treated as missing");
     }
 
@@ -257,7 +328,7 @@ mod tests {
         drop(conn);
 
         let (start, end) = window();
-        let report = read_usage(&path, start, end);
+        let report = read_usage(&path, start, end, &mut ProjectRootCache::new());
         assert_eq!(report.totals.entries, 1);
         assert_eq!(report.totals.output_tokens, 50);
     }
@@ -269,7 +340,7 @@ mod tests {
         make_db(&path);
 
         let (start, end) = window();
-        let report = read_usage(&path, start, end);
+        let report = read_usage(&path, start, end, &mut ProjectRootCache::new());
         assert_eq!(report.status, AgentStatus::Ok);
         assert_eq!(report.totals.entries, 0);
         assert_eq!(report.totals.cost, None);

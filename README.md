@@ -73,10 +73,18 @@ config editor, and an autostart toggle:
 | `agent-usage` | Opens the usage panel with all three agents. |
 | `agent-usage:claude` / `agent-usage:codex` / `agent-usage:opencode` | Opens the panel scoped to one agent. |
 | `toggle-autostart` | Flips the autostart setting and reconciles the OS entry. |
-| `edit-config`, `run:<command>`, `omniroute-status` | Reserved item actions; not yet wired up in the Tauri app (a clicked cell shows a placeholder). |
+| `edit-config` | Opens `config.json` in the OS default editor (opener plugin, scoped to the app config dir). |
+| `run:<command>`, `omniroute-status` | Reserved item actions; not yet wired up in the Tauri app (a clicked cell shows a placeholder — see O9 in `odd/tasks/orbitbar-rebrand.md` for `run:<command>`'s open security decision). |
 
 A hand-edited config that fails to parse never bricks the bar: the broken
 file is renamed to `config.json.invalid` and the app restarts on defaults.
+
+### Controls
+
+Right-click the bar (or the collapsed tab) for a menu: open config.json or
+pricing.json in your editor, collapse/expand, reload config.json without
+restarting, or quit. Escape closes the menu, same as it closes the usage
+panel; clicking outside it closes it too.
 
 ### Usage panel
 

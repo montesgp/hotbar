@@ -3,11 +3,9 @@
  * the Rust ThemePalette (themes are data, never code). The :root block below
  * is only a fallback so the page is not blank before get_config resolves.
  *
- * Geometry here is ported 1:1 from the measured WPF v1 window
- * (legacy/windows-widget/orbitbar.ps1).
- * Those numbers are a specification, not a style opinion: the bar is 72x400 and
- * the crescent is a 200px radius on the left edge, which is exactly what the
- * WPF `CornerRadius="200,0,0,200"` produced on a 72x400 border.
+ * Geometry here is a fixed specification, not a style opinion: the bar is
+ * 72x400 and the crescent is a 200px radius on the left edge (equivalent to
+ * a `CornerRadius="200,0,0,200"` on a 72x400 border).
  */
 :root {
   --ob-bg: #101014;
@@ -64,6 +62,14 @@ body {
 body {
   display: flex;
   align-items: stretch;
+  /* The bar is a fixed-width flex item (see .bar below), never `flex: 1`, so
+   * it must be pushed to the right edge itself instead of relying on a
+   * flex sibling to absorb the leftover space. That leftover space is
+   * exactly where the panel (a real flex sibling, fixed 320px) or the
+   * context menu (a `position: fixed` overlay, NOT a flex sibling) render;
+   * flex-end keeps the bar pinned right in both cases and when neither is
+   * open. */
+  justify-content: flex-end;
 }
 
 /*
@@ -72,13 +78,23 @@ body {
  * sibling card (see index.html) instead of a child: `overflow: hidden`
  * below clips anything inside `.bar` to its curve, and the panel used to be
  * that "anything" — its select text and long project paths were clipped
- * against the ellipse instead of a straight edge. The bar keeps a fixed
- * 72px whether the panel is open or not; `flex: 1 1 auto` just lets it fill
- * whatever the window's width minus the panel (0 or 320px) leaves it.
+ * against the ellipse instead of a straight edge.
+ *
+ * The bar is a FIXED 72px (46px collapsed, see body.collapsed .bar below),
+ * never `flex: 1 1 auto`. It used to be flex:1 on the assumption that a
+ * flex sibling (the panel, fixed 0 0 320px, or nothing) always accounts for
+ * the rest of the window's width — true for the panel, but the context
+ * menu is a `position: fixed` overlay that claims no flex space, so with
+ * flex:1 the bar itself stretched to fill the widened window and the
+ * crescent deformed (cells off-center, tab stretched when collapsed). A
+ * fixed width plus `justify-content: flex-end` on body keeps the bar
+ * pixel-identical to its menu-closed shape in every state; any leftover
+ * width is exactly where the panel or the menu card renders.
  */
 .bar {
   position: relative;
-  flex: 1 1 auto;
+  flex: 0 0 72px;
+  width: 72px;
   height: 100%;
   display: flex;
   align-items: center;
@@ -131,6 +147,30 @@ body.moon .bar {
   border: 1px solid var(--ob-bar-border);
   border-radius: 12px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  /* Firefox/standard thin scrollbar, styled with the bar's own tokens
+   * instead of the default OS scrollbar. The 12px right padding above
+   * already leaves room for the 7px thumb, so scrolled content never sits
+   * under it. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--ob-text-dim) transparent;
+}
+
+/* WebView2/WebKit equivalent of the standard scrollbar-* properties above. */
+.panel::-webkit-scrollbar {
+  width: 7px;
+}
+
+.panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  background: var(--ob-text-dim);
+  border-radius: var(--ob-radius-handle);
+}
+
+.panel::-webkit-scrollbar-thumb:hover {
+  background: var(--ob-hover-fg);
 }
 
 .panel[hidden] {
@@ -177,8 +217,8 @@ body.moon .bar {
 
 /*
  * Token-usage panel (agent-usage / agent-usage:<agent>). Layout only — the
- * numbers and status text come from app/src/usage-view.ts, which mirrors the
- * legacy Get-OrbitbarAgentLines panel (status, totals, cost, top projects).
+ * numbers and status text come from app/src/usage-view.ts (status, totals,
+ * cost, top projects).
  */
 .usage-window-row {
   margin-bottom: 6px;
@@ -249,6 +289,62 @@ body.moon .bar {
 .usage-project-stats {
   flex: 0 0 auto;
   white-space: nowrap;
+}
+
+/*
+ * Right-click context menu — a card styled with the same --ob-* tokens as
+ * .panel, positioned by main.ts (openContextMenu/positionContextMenu) inside
+ * the extra width the window grows for it. `position: fixed` puts it
+ * relative to the window's own content area (there is no browser chrome),
+ * so `left` is just an inset from the window's left edge, not the bar's.
+ */
+.context-menu {
+  position: fixed;
+  left: 6px;
+  width: 158px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--ob-panel);
+  border: 1px solid var(--ob-bar-border);
+  border-radius: var(--ob-radius-handle);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  z-index: 10;
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu-item {
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--ob-radius-handle);
+  background: transparent;
+  color: var(--ob-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.context-menu-item:hover {
+  background: var(--ob-hover-bg);
+  color: var(--ob-hover-fg);
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  border: none;
+  /* --ob-bar-border equals --ob-panel in every shipped theme, which would
+   * make the separator invisible against the menu's own background; dim
+   * text keeps it visible without a theme-specific override. */
+  background: var(--ob-text-dim);
+  opacity: 0.35;
 }
 
 /*
@@ -362,6 +458,12 @@ body.moon .bar {
  * chevron flips because expanding grows the bar LEFT into the desktop.
  */
 body.collapsed .bar {
+  flex-basis: 46px;
+  width: 46px;
+  /* The window grows taller while the context menu is open; the tab must
+   * stay a 46px square centered on the edge instead of stretching with it. */
+  height: 46px;
+  align-self: center;
   border-radius: var(--ob-tab-radius) 0 0 var(--ob-tab-radius);
 }
 

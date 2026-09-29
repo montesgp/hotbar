@@ -7,16 +7,11 @@
 //!
 //! If the file does not exist on first launch it is created with the defaults
 //! below, so end users always get an editable config without installing tools.
-//!
-//! The Tauri identifier used to be `com.hotbar.app`, which put the config in a
-//! sibling directory under the same platform config root. `migrate_legacy_config`
-//! copies that old file into the new location on first launch so a rename of
-//! the app never drops an existing user's settings.
 
 use crate::usage::TimeWindow;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,8 +30,8 @@ pub struct AppConfig {
     pub auto_start: bool,
     /// The time window the usage panel (`agent-usage` / `agent-usage:<agent>`)
     /// reads by default and persists after the user changes the selector.
-    /// Defaults to `ThisMonth`, matching the legacy widget's month-to-date
-    /// panel; a config written before this field existed simply gets that
+    /// Defaults to `ThisMonth`, the month-to-date view most useful at a
+    /// glance; a config written before this field existed simply gets that
     /// default rather than failing to parse, the same migration-safe pattern
     /// `auto_start` uses above.
     pub usage_window: TimeWindow,
@@ -173,14 +168,6 @@ pub fn load(app: &AppHandle) -> Result<AppConfig, String> {
     let dir = config_dir(app)?;
     let path = dir.join("config.json");
 
-    if let Some(legacy_dir) = legacy_config_dir(app) {
-        let legacy_path = legacy_dir.join("config.json");
-        // Best-effort: a migration failure (e.g. unreadable old file) must not
-        // block startup. Falling through to the ordinary default-writer below
-        // is strictly better than refusing to launch.
-        let _ = migrate_legacy_config(&legacy_path, &path);
-    }
-
     if !path.exists() {
         let cfg = AppConfig::default();
         persist(&path, &cfg)?;
@@ -234,36 +221,46 @@ pub fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// The pre-rename per-user config dir, if it can be resolved. The Tauri
-/// identifier used to be `com.hotbar.app`, a sibling of the current
-/// `com.orbitbar.app` under the same platform config root, so this never
-/// calls `app_config_dir()` itself (that resolves the *current* identifier)
-/// and instead derives the sibling path from it.
-fn legacy_config_dir(app: &AppHandle) -> Option<PathBuf> {
-    let dir = app.path().app_config_dir().ok()?;
-    let parent = dir.parent()?;
-    Some(parent.join("com.hotbar.app"))
-}
-
-/// Copies `old_path` into `new_path` when the new config does not exist yet
-/// but the old one does. Returns whether a migration happened. The old file
-/// is left in place (copy, not move) so a rollback to a previous build still
-/// finds its config.
-fn migrate_legacy_config(old_path: &Path, new_path: &Path) -> Result<bool, String> {
-    if new_path.exists() || !old_path.exists() {
-        return Ok(false);
-    }
-    if let Some(parent) = new_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
-    fs::copy(old_path, new_path)
-        .map_err(|e| format!("cannot copy {} to {}: {e}", old_path.display(), new_path.display()))?;
-    Ok(true)
-}
-
 fn persist(path: &PathBuf, cfg: &AppConfig) -> Result<(), String> {
     let json = serde_json::to_string_pretty(cfg).map_err(|e| format!("cannot serialize config: {e}"))?;
     fs::write(path, json).map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// Default content written for a first-time `pricing.json`: the same
+/// explanatory `_readme` as `app/pricing.example.json`, but with an empty
+/// override table instead of the example's `my-local-model` row, so the file
+/// carries no sample data that could be mistaken for something real.
+const PRICING_TEMPLATE: &str = r##"{
+  "_readme": [
+    "Add or override model prices here. get_usage reloads this file on every",
+    "call, so edits apply on the next refresh without restarting the app.",
+    "",
+    "Key under 'models' = a model id, or a prefix of one (e.g. 'claude-opus-5-5'",
+    "also matches 'claude-opus-5-5-20260926'). An entry here wins over a",
+    "built-in row with the exact same key; a longer key always wins over a",
+    "shorter one, built-in or override. Amounts are USD per 1M tokens.",
+    "",
+    "cacheRead / cacheWrite5m / cacheWrite1h are optional. When omitted they",
+    "default to 0.1x, 1.25x and 2x that entry's own input price - Anthropic's",
+    "published cache multipliers."
+  ],
+  "models": {}
+}
+"##;
+
+/// Creates `pricing.json` at `path` from `PRICING_TEMPLATE` if it does not
+/// exist yet, so "Open pricing file" always opens something useful instead
+/// of the OS reporting a missing file. Never touches an existing file, even
+/// an empty or malformed one - once the user has a pricing.json, it is
+/// theirs to edit, not ours to regenerate.
+pub fn ensure_pricing_file(path: &PathBuf) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    fs::write(path, PRICING_TEMPLATE).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 fn default_items() -> Vec<Item> {
@@ -418,80 +415,42 @@ mod tests {
         assert_eq!(cfg.usage_window, TimeWindow::Last7Days);
     }
 
-    /// The identifier rename (`com.hotbar.app` -> `com.orbitbar.app`) moves the
-    /// per-user config dir. A user with an existing config under the old
-    /// identifier must not lose it: the old file gets copied into the new
-    /// location on first launch, before it is loaded.
+    /// "Open pricing file" must always open something useful, so a missing
+    /// pricing.json is created from a template with an empty override table
+    /// instead of the OS reporting a file-not-found error.
     #[test]
-    fn migrate_legacy_config_copies_old_into_new_when_only_old_exists() {
-        let tmp = std::env::temp_dir().join(format!(
-            "orbitbar-migrate-test-{}-a",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        let old_path = tmp.join("old").join("config.json");
-        let new_path = tmp.join("new").join("config.json");
-        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
-        fs::write(&old_path, r#"{"theme":"dark"}"#).unwrap();
-
-        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
-
-        assert!(migrated, "must report that it migrated");
-        assert!(new_path.exists(), "new config must now exist");
-        assert!(old_path.exists(), "old config must be preserved, not moved");
-        assert_eq!(
-            fs::read_to_string(&new_path).unwrap(),
-            fs::read_to_string(&old_path).unwrap()
-        );
-
-        let _ = fs::remove_dir_all(&tmp);
+    fn ensure_pricing_file_creates_the_template_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pricing.json");
+        ensure_pricing_file(&path).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("\"models\""), "template must be parseable pricing.json shape");
+        // The template itself must be valid pricing.json, not just contain the word.
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(parsed["models"].is_object());
     }
 
-    /// When the new config already exists, the migration must not clobber it
-    /// with the old one, even if the old one is still present.
+    /// The user's own edits are theirs: an existing pricing.json, even one
+    /// pricing.rs would consider malformed, must never be overwritten by
+    /// "Open pricing file".
     #[test]
-    fn migrate_legacy_config_does_nothing_when_new_already_exists() {
-        let tmp = std::env::temp_dir().join(format!(
-            "orbitbar-migrate-test-{}-b",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        let old_path = tmp.join("old").join("config.json");
-        let new_path = tmp.join("new").join("config.json");
-        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
-        fs::create_dir_all(new_path.parent().unwrap()).unwrap();
-        fs::write(&old_path, r#"{"theme":"dark"}"#).unwrap();
-        fs::write(&new_path, r#"{"theme":"classic"}"#).unwrap();
-
-        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
-
-        assert!(!migrated, "must not report a migration");
-        assert_eq!(fs::read_to_string(&new_path).unwrap(), r#"{"theme":"classic"}"#);
-
-        let _ = fs::remove_dir_all(&tmp);
+    fn ensure_pricing_file_never_overwrites_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pricing.json");
+        fs::write(&path, r#"{"models":{"x":{"input":1.0,"output":1.0}}}"#).unwrap();
+        ensure_pricing_file(&path).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("\"x\""), "existing user content must survive");
     }
 
-    /// When neither file exists, migration is a safe no-op: the ordinary
-    /// first-launch default writer takes over from there.
+    /// The config dir may not exist yet on a first run — `ensure_pricing_file`
+    /// has to create it, the same as `config_dir` does for config.json.
     #[test]
-    fn migrate_legacy_config_does_nothing_when_neither_exists() {
-        let tmp = std::env::temp_dir().join(format!(
-            "orbitbar-migrate-test-{}-c",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        let old_path = tmp.join("old").join("config.json");
-        let new_path = tmp.join("new").join("config.json");
-
-        let migrated = migrate_legacy_config(&old_path, &new_path).unwrap();
-
-        assert!(!migrated);
-        assert!(!new_path.exists());
-
-        let _ = fs::remove_dir_all(&tmp);
+    fn ensure_pricing_file_creates_missing_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("pricing.json");
+        ensure_pricing_file(&path).unwrap();
+        assert!(path.exists());
     }
 
     /// The default set must stay usable: the bar renders nothing if there is

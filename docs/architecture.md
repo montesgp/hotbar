@@ -61,7 +61,7 @@ file, and the frontend only ever talks to the Rust core through Tauri's
 | Window/UI | `app/src/main.ts`, `app/src/styles.css`, `app/index.html` | Crescent bar geometry, collapse/expand, drag, theme application, item clicks, panel toggling |
 | View-model | `app/src/usage-view.ts` | Pure functions that turn a `UsageSnapshot` into rendered lines — no DOM, unit-testable in isolation |
 | Tauri commands | `app/src-tauri/src/lib.rs` | `get_config`, `save_config`, `get_usage`; window placement and autostart reconciliation on launch |
-| Config | `app/src-tauri/src/config.rs` | Schema (`AppConfig`), per-OS config dir resolution, load/save, theme palettes, legacy-identifier config migration |
+| Config | `app/src-tauri/src/config.rs` | Schema (`AppConfig`), per-OS config dir resolution, load/save, theme palettes |
 | Usage aggregation | `app/src-tauri/src/usage/mod.rs` | `TimeWindow`, `collect_usage`, project-path normalization, the `UsageSnapshot` shape returned to the frontend |
 | Per-agent readers | `app/src-tauri/src/usage/{claude,codex,opencode}.rs` | One reader per agent store, each returning its own `AgentUsageReport` so a broken store never hides the other two |
 | Pricing | `app/src-tauri/src/usage/pricing.rs` | Built-in price table (sourced, dated) plus `pricing.json` override loading and cost estimation |
@@ -136,7 +136,7 @@ beyond wiring the new item's `action` to the new `invoke()` call.
 | `app/src/usage-view.ts` | Usage panel view-model: formatting, window options, per-agent/per-project rendering |
 | `app/src/styles.css` | Bar and panel styling, driven by `--ob-*` custom properties |
 | `app/src-tauri/src/lib.rs` | Tauri commands, window placement, autostart reconciliation |
-| `app/src-tauri/src/config.rs` | Config schema, load/save, theme palettes, legacy config migration |
+| `app/src-tauri/src/config.rs` | Config schema, load/save, theme palettes |
 | `app/src-tauri/src/usage/mod.rs` | `TimeWindow`, `collect_usage`, `UsageSnapshot`, project-path normalization |
 | `app/src-tauri/src/usage/claude.rs` | Claude Code JSONL reader |
 | `app/src-tauri/src/usage/codex.rs` | Codex CLI JSONL reader |
@@ -146,10 +146,9 @@ beyond wiring the new item's `action` to the new `invoke()` call.
 
 ## History
 
-The product started as a Windows-only PowerShell/WPF prototype
-(`legacy/windows-widget/`), which validated the reader-and-panel shape
-before the Rust/Tauri rewrite. That prototype is scheduled for removal once
-the Tauri app reaches parity on the author's machine; see
+The product started as a Windows-only PowerShell/WPF prototype that
+validated the reader-and-panel shape before the Rust/Tauri rewrite. The
+prototype was removed once the Tauri app reached parity; see
 `odd/tasks/orbitbar-rebrand.md`.
 
 ## Branching

@@ -4,10 +4,9 @@
  * frontend test runner exists — none is wired up yet, see the O5b task notes.
  *
  * Mirrors the Rust shapes serialized by `get_usage`
- * (app/src-tauri/src/usage/mod.rs), camelCase throughout. The legacy
- * PowerShell widget (`legacy/windows-widget/orbitbar.ps1`,
- * `Get-OrbitbarAgentLines`) is the reference for what the panel shows: per
- * agent status, totals, cost, then up to 5 top projects by output tokens.
+ * (app/src-tauri/src/usage/mod.rs), camelCase throughout. What the panel
+ * shows: per agent status, totals, cost, then up to 5 top projects by
+ * output tokens.
  */
 
 export type TimeWindow = "today" | "last7Days" | "last30Days" | "thisMonth";
@@ -157,7 +156,7 @@ function parentSegment(path: string): string | null {
  * "src-tauri" projects) and land side by side in the same agent's top-5
  * list with nothing to tell them apart. When a name collides within the
  * list actually being shown, this prefixes the parent folder so the rows
- * stay distinct (e.g. "app/src-tauri" vs "legacy/src-tauri"); a name that
+ * stay distinct (e.g. "app/src-tauri" vs "tools/src-tauri"); a name that
  * is unique in the list is left alone. Collisions are only checked within
  * `projects` (the already-truncated top-5), not the full project set, since
  * that is what the user sees together.
@@ -189,7 +188,7 @@ export interface AgentSectionViewModel {
   topProjects: ProjectLineViewModel[];
 }
 
-/** Max projects shown per agent, ported from the legacy widget's `$script:AgentHistoryMaxProjectsShown`. */
+/** Max projects shown per agent. */
 export const MAX_PROJECTS_SHOWN = 5;
 
 /**

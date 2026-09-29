@@ -119,8 +119,15 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       screenshots of closed / open / switch / close states inspected (parent re-checked two);
       `cargo test` 69/69, clippy, `tsc`, `npm run build` clean. Lesson: O5b was marked done
       without opening the panel — UI tasks now require screenshot verification.
-- [ ] **O9 — Wire the remaining item actions**: `edit-config` (open config.json and
-      pricing.json in the OS default editor) and `run:<cmd>`; today they show a placeholder.
+- [x] **O9 — Wire the remaining item actions.** `edit-config` (the ⚙ cell and the context
+      menu's "Open config") opens config.json in the OS default editor via
+      `@tauri-apps/plugin-opener` `openPath`, scoped to the app config dir
+      (`opener:allow-open-path` with `$APPCONFIG/**` in `capabilities/default.json`). "Open
+      pricing file" creates `pricing.json` from a built-in template (`config::ensure_pricing_file`,
+      mirrors `pricing.example.json` with an empty `models` table) if missing, never overwrites
+      an existing one, then opens it the same way. `run:<cmd>` **stays a documented placeholder**
+      — running an arbitrary command is a security decision left to the user, not wired here.
+      Done in polish Unit 6 below, full evidence there.
 - [ ] **O5 — Usage readers in Rust** (umbrella) (claude jsonl, codex jsonl, opencode sqlite, pricing
       table), per agent and per project, configurable time window; wired to the
       `agent-usage` panel. Parity with the legacy widget numbers on the author's machine.
@@ -131,17 +138,120 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       `montesgp/hotbar` → `montesgp/orbitbar` with a new description and topics. Remaining
       hotbar/PowerShell mentions are code comments about the config migration and the
       legacy parity source (go away with O8).
-- [ ] **O8 — Remove everything old** (user, 2026-09-28: "todo lo que sea viejo lo borramos...
+- [x] **O8 — Remove everything old** (user, 2026-09-28: "todo lo que sea viejo lo borramos...
       debe quedar lo más clean posible el repo").
       - [x] Stale `HKCU\...\Run\Hotbar` autostart entry removed (pointed to a deleted exe).
       - [x] Finished-feature trackers `odd/tasks/{herdr-hub,hotbar-widget,omniroute-autofallback}.md`
             and the Herdr-only `docs/status-panes.md` deleted (kept in git history and Engram).
-      - [ ] After O5b reaches parity on the author's machine: delete `legacy/windows-widget/`,
-            `extensions/omniroute/legacy-widget/`, and `%APPDATA%\com.hotbar.app` (only after
-            the new app has migrated the config).
-      - [ ] O6 rewrites `README.md`, `docs/architecture.md`, `docs/hotbar.md`, `app/README.md`.
+      - [x] `legacy/windows-widget/` and `extensions/omniroute/legacy-widget/` deleted
+            (`20283d0`, work unit 1 below); `com.hotbar.app` config-dir migration removed from
+            `config.rs` with its 3 tests. `%APPDATA%\com.hotbar.app` on disk is user machine
+            state, not repo content — left for the user to clear manually if wanted.
+      - [x] O6 rewrites `README.md`, `docs/architecture.md`, `docs/hotbar.md`, `app/README.md`.
+            Evidence: `git grep -in "legacy|hotbar|powershell" -- . ':!odd'` → only justified
+            hits left (BOM/Notepad-PowerShell-5.1 compat notes in config.rs, one past-tense
+            History mention in architecture.md with no dead path, and the still-live
+            `extensions/herdr/scripts/*.ps1` files).
 - [ ] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar` (after the folder
       rename; verify the supported mechanism first).
+
+## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
+
+- [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
+      `git rm -r legacy extensions/omniroute/legacy-widget`; removed the gitignored
+      `legacy/windows-widget/config.json` from disk and its `.gitignore` line; removed
+      `legacy_config_dir`/`migrate_legacy_config` and their 3 tests from `config.rs` (the
+      author's machine already migrated). Reworded every comment/doc pointing at the deleted
+      files (main.ts, usage-view.ts, styles.css, usage/{mod,claude,codex,opencode,pricing}.rs,
+      docs/architecture.md, extensions/README.md, herdr-plugin.toml description) to describe
+      current behavior, keeping the real rationale (dedup rules, windowing, pricing sourcing).
+      Commit `20283d0`. Evidence: `cargo test` 66/66, `cargo clippy --all-targets` clean,
+      `tsc --noEmit` clean, `npm run build` OK.
+- [x] **Unit 2 — Fix the collapsed tab chevron.** It used U+2038 CARET ("‸", points up) instead
+      of U+2039 ("‹", points left — the tab expands leftward). Fixed in `app/index.html` and
+      `app/src/main.ts` `setCollapsedUi`. Commit `044188e`. Evidence: screenshot of the
+      collapsed dev-build window inspected — chevron points left.
+- [x] **Unit 3 — One usage total per project, not per subfolder** (user: "con el total por
+      proyecto es suficiente"). Root cause: projects were keyed by the raw session cwd, so
+      `app`, `app/src-tauri`, `.claude/worktrees/agent-*` showed as separate rows of the same
+      repo. Added `resolve_project_root` (shared by claude/codex/opencode readers, cached per
+      snapshot): walks up from a cwd to the nearest `.git` ancestor, resolves a worktree's
+      `.git` FILE to the main repo root, falls back to the cwd when no `.git` ancestor exists
+      or the path is gone. Bounded at the user's home directory — a bare dotfiles repo directly
+      in `$HOME` would otherwise merge every repo-less project into one row (caught by a real
+      test failure on the author's machine, fixed before landing). Frontend name-collision
+      disambiguation in `usage-view.ts` kept (different repos can still share a folder name).
+      Commit `d10e977`. Evidence: RED → GREEN for 5 new `resolve_project_root` unit tests plus
+      3 "two cwds/worktrees merge into one row" integration tests (one per reader); `cargo test`
+      74/74, clippy clean. Real-data screenshot: `herdr-omniroute` appears as one row per agent
+      (no `app`/`src-tauri` subfolder rows); see Verification below for the full row list.
+- [x] **Unit 4 — Style the panel scrollbar to match the bar.** Added `scrollbar-width: thin` /
+      `scrollbar-color` (Firefox/standard) and `::-webkit-scrollbar*` (WebView2/WebKit) rules
+      to `.panel` using the existing `--ob-text-dim` / `--ob-hover-fg` tokens: 7px, rounded
+      thumb, transparent track. Commit `da47a67`. Evidence: `tsc --noEmit` + `npm run build`
+      OK; screenshot of a scrolled panel inspected — thin styled thumb visible, no content
+      hidden under it.
+- [x] **Unit 5 — Right-click context menu with Quit** (user: "the toolbar has no exit or
+      close; it should have one and that would kill the process"). Right-clicking `#bar` or
+      the collapsed `#tab` opens a card styled with the existing `--ob-*` tokens (same look as
+      `.panel`: rounded, bar-border, box-shadow), never the WebView2 default menu (suppressed
+      app-wide with `window.addEventListener("contextmenu", preventDefault)`). Entries: Open
+      config, Open pricing file, Collapse/Expand, Reload config, a separator, Quit Orbitbar.
+      Escape and click-outside both close it, same as the panel. New Rust command `quit_app`
+      calls `app.exit(0)` (not `window.close()`, which only removes the window and leaves the
+      process running — the exact bug reported). **Design decision — in-webview card, not
+      Tauri's native `tauri::menu` popup:** the requirement is a menu that looks like the rest
+      of the bar (`--ob-*` tokens, hover state); an OS-drawn native popup cannot be styled with
+      CSS and would look inconsistent across Windows/macOS/Linux, so it was rejected even
+      though it needs no window resizing. Instead the card reuses the resize-and-snap technique
+      `applyState` already uses for the usage panel (`app/src/main.ts` `sizeFor`/`applyState`
+      gained a `menuOpen` parameter): the window temporarily widens left by
+      `CONTEXT_MENU_WIDTH` (170px) — and, only when collapsed (46px is shorter than the menu),
+      grows to `CONTEXT_MENU_MIN_HEIGHT` (210px) too — then snaps back on close. No new Tauri
+      capability needed (no `core:menu:*`) since the popup is DOM, not native. Commit `08707b0`.
+      Route: direct inline (one bounded writer session, `app/src/main.ts`, `app/index.html`,
+      `app/src/styles.css`, `app/src-tauri/src/lib.rs`). Evidence: `cargo build`/`cargo test`
+      79/79 (1 ignored) clean; `tsc --noEmit` clean; screenshots of the menu expanded (242x400)
+      and collapsed (216x210) inspected — all 5 entries + separator fully readable in both
+      states (fixed a real bug found this way: the separator used `--ob-bar-border`, which
+      equals `--ob-panel` in both shipped themes and was invisible — changed to
+      `--ob-text-dim` at 35% opacity). Quit verified end-to-end: `Get-Process orbitbar` and a
+      `Get-CimInstance` sweep for `orbitbar|tauri dev|vite` showed nothing after clicking Quit,
+      including the dev-server-launched process tree (npm → vite → cargo → orbitbar.exe all
+      exited, no orphaned `msedgewebview2.exe`).
+      **Follow-up fix (same session, after coordinator review of these screenshots):** the
+      screenshots above also showed the crescent bar itself stretching to fill the widened
+      window (cells off-center expanded, tab stretched collapsed) instead of staying a fixed
+      72px/46px card with the menu beside it. Root cause: `.bar` was `flex: 1 1 auto`, which
+      only stayed at 72px because the panel — a real, fixed-width flex sibling — used to
+      account for every extra pixel; the menu card is `position: fixed` and claims no flex
+      space, so with the panel closed `.bar` was the sole flex child and stretched to fill the
+      whole window. Fixed by giving `.bar` a fixed `flex-basis`/`width` (72px, 46px collapsed)
+      and `justify-content: flex-end` on `body` so it stays pinned right with no flex sibling
+      to do that for it. Commit `9719323`. Re-verified: menu expanded (242x400) and collapsed
+      (216x210) — bar now pixel-identical in width/shape to the menu-closed screenshots; usage
+      panel open (392x400) still renders correctly, no regression.
+- [x] **Unit 6 — Wire `edit-config` / "Open pricing file" / "Reload config"** (O9, minus
+      `run:<cmd>`). The ⚙ cell and the menu's "Open config" call `get_config_path` then
+      `@tauri-apps/plugin-opener`'s `openPath`; "Open pricing file" calls the new
+      `ensure_pricing_file` command first (creates `pricing.json` from a built-in template —
+      same `_readme` as `pricing.example.json`, empty `models` table — only if missing; never
+      touches an existing file) then opens it the same way. Opener scoped to the app config dir
+      only: `capabilities/default.json` gained `{"identifier":"opener:allow-open-path","allow":
+      [{"path":"$APPCONFIG/**"}]}` (the bare `opener:default` set does not include
+      `allow-open-path`). "Reload config" re-invokes `get_config` and mutates the existing
+      `cfg` object in place (`Object.assign`) so every closure that already captured it keeps
+      working without rebinding; cells, theme and autostart-cell bindings are re-rendered.
+      `run:<cmd>` stays an explicit placeholder — running an arbitrary command is a security
+      decision left to the user, not made here. TDD: RED (`ensure_pricing_file` unresolved,
+      3 tests) → GREEN, `cargo test` 79/79 (1 ignored). Route: direct inline, same session as
+      Unit 5. Evidence: `cargo clippy --all-targets` clean; `npx tsc --noEmit` clean;
+      `npm run build` OK; end-to-end on a live `npm run tauri dev` instance — "Open config"
+      launched VS Code on `%APPDATA%\com.orbitbar.app\config.json` (closed after, verified no
+      `Code.exe` left); "Open pricing file" created `pricing.json` (verified its exact template
+      content) and opened it the same way (closed after); "Reload config" with `theme` hand-
+      edited to `dark` on disk re-rendered the bar in the dark palette live, no restart
+      (reverted to `classic` after). Commit `78c7a1d`.
 
 ## Checks
 
@@ -165,7 +275,35 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 ## Progress
 
 - 2026-09-28: mapping done (delegated explorer). Branch created. Doc created.
+- 2026-09-28: `chore/orbitbar-polish` branch (based on `dev`) — bounded writer completed the
+  4 polish units above (O8 now fully done). Verification: `cargo test` 74/74,
+  `cargo clippy --all-targets` clean, `npx tsc --noEmit` clean, `npm run build` OK. Screenshots
+  taken against a `npm run tauri dev` instance (PID distinguished from the user's pre-existing
+  `target\release\orbitbar.exe`, which was never touched) and inspected: collapsed tab, `$`
+  panel scrolled/unscrolled. Dev processes stopped after verification
+  (`taskkill /T /F` on the npm→tauri→cargo→orbitbar.exe tree only).
+  Per-project rows observed on the author's machine (ThisMonth), names only:
+  - Claude: incoders-commerce, receipt-risk-detector, incoders-hive, herdr-omniroute,
+    agent-a089898dab7b534a6 (5 rows)
+  - Codex: incoders-commerce, portfolio, digital-menu, patri, personal (5 rows)
+  - OpenCode: herdr-omniroute, patri, montesgp, digital-menu, portfolio (5 rows)
+  No `app`/`src-tauri`/worktree subfolder rows appear for `herdr-omniroute` — confirms Unit 3.
+  `agent-a089898dab7b534a6` stayed a separate row under Claude, consistent with the documented
+  fallback (its session cwd has no reachable `.git` ancestor on this machine, e.g. a deleted
+  worktree checkout).
+- 2026-09-28: same branch, second bounded-writer session — Units 5-6 above (user: "the toolbar
+  has no exit or close; it should have one and that would kill the process"). Commits `08707b0`
+  (menu + quit) and `78c7a1d` (wiring). Full verification against two fresh `npm run tauri dev`
+  instances, killed after each check (no leftover `orbitbar.exe`/`cargo`/`vite` process
+  confirmed via `Get-CimInstance` after every session, including after Quit itself). Automation
+  note for any future screenshot-driven verification of this bar: `mouse_event` down/up alone is
+  unreliable against this WebView2 window — it needs a `SetForegroundWindow` (with an Alt-tap to
+  dodge the foreground-lock timeout) plus a tiny relative `MOUSEEVENTF_MOVE` immediately before
+  the click, or WebView2 does not register the hit-test; the window resize after a menu
+  open/close is also asynchronous and needs ~1-2s before `GetWindowRect` reflects it, not the
+  ~700ms that was tried first.
 
 ## Next step
 
-O1 (personal data), delegated writer.
+O9 is done except `run:<cmd>` (open security decision left to the user). O7 (Engram project
+migration) is the remaining open task.

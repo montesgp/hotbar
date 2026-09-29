@@ -1,24 +1,20 @@
 //! Claude usage reader: every `*.jsonl` under `~/.claude/projects`, de-duped
-//! and windowed. Ported from `Get-ClaudeAgentHistory` in
-//! `legacy/windows-widget/lib/Get-AgentUsage.ps1`.
+//! and windowed.
 //!
 //! Subagent files are billed too, so every file counts, not just the newest
 //! one. The store keeps more than one copy of many assistant messages
 //! (original plus a snapshot copy), so entries are de-duplicated per file by
 //! `requestId`, falling back to `message.id` and then `uuid` - summing raw
-//! doubles every counter, verified on the legacy widget's own machine.
+//! doubles every counter.
 //!
-//! Deviation from the legacy script: the legacy per-project bucket is filled
-//! from every entry seen in the read budget regardless of whether that entry
-//! falls inside the month, while the month total is filtered. That looks like
-//! an oversight rather than a deliberate design (the panel's own docstring
-//! says the project split is "over every project cwd the agent's own store
-//! touched this month"), so this port applies the window consistently to
-//! both the totals and the per-project breakdown.
+//! The window is applied consistently to both the totals and the
+//! per-project breakdown: an entry outside the window never contributes to
+//! either, so the per-project split always matches what the totals claim for
+//! the same window.
 
 use crate::usage::{
-    find_jsonl_files, normalize_project_path, pricing, project_display_name, AgentUsageReport,
-    CostBasis, ProjectUsage, UsageTotals,
+    find_jsonl_files, normalize_project_path, pricing, project_display_name, resolve_project_root,
+    AgentUsageReport, CostBasis, ProjectRootCache, ProjectUsage, UsageTotals,
 };
 use chrono::{DateTime, Local};
 use serde_json::Value;
@@ -46,11 +42,15 @@ impl Bucket {
 
 /// Reads month/window usage from every claude session file under `root`,
 /// pricing against `overrides` layered on top of the built-in table.
+/// Per-project totals are keyed by resolved project root (see
+/// `resolve_project_root`), not the raw session cwd, so two cwds inside the
+/// same repository merge into one row.
 pub fn read_usage(
     root: &Path,
     start: DateTime<Local>,
     end: DateTime<Local>,
     overrides: &pricing::PriceOverrides,
+    root_cache: &mut ProjectRootCache,
 ) -> AgentUsageReport {
     if !root.exists() {
         return AgentUsageReport::not_installed(AGENT, format!("missing directory: {}", root.display()));
@@ -112,6 +112,7 @@ pub fn read_usage(
 
             let cwd = entry.get("cwd").and_then(Value::as_str).unwrap_or("");
             let cwd = normalize_project_path(cwd);
+            let project_key = if cwd.is_empty() { cwd } else { resolve_project_root(&cwd, root_cache) };
 
             let model = entry
                 .get("message")
@@ -131,8 +132,8 @@ pub fn read_usage(
 
             add_entry(&mut month, input, output, cache_read, cache_write_5m, cache_write_1h, reasoning, model);
 
-            if !cwd.is_empty() {
-                let bucket = projects.entry(cwd).or_insert_with(Bucket::new);
+            if !project_key.is_empty() {
+                let bucket = projects.entry(project_key).or_insert_with(Bucket::new);
                 add_entry(bucket, input, output, cache_read, cache_write_5m, cache_write_1h, reasoning, model);
             }
         }
@@ -250,7 +251,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let missing = dir.path().join("nope");
         let (start, end) = window();
-        let report = read_usage(&missing, start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(&missing, start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         assert_eq!(report.status, crate::usage::AgentStatus::NotInstalled);
     }
 
@@ -267,7 +268,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         assert_eq!(report.status, crate::usage::AgentStatus::Ok);
         assert_eq!(report.totals.entries, 1, "the duplicate copy must not be counted twice");
         assert_eq!(report.totals.output_tokens, 50);
@@ -294,7 +295,7 @@ mod tests {
         );
         fs::write(project.join("session.jsonl"), content).unwrap();
 
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         assert_eq!(report.totals.entries, 1);
         assert_eq!(report.totals.output_tokens, 50);
     }
@@ -311,7 +312,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         assert_eq!(report.status, crate::usage::AgentStatus::Ok);
         assert_eq!(report.totals.entries, 1);
     }
@@ -329,10 +330,47 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         assert_eq!(report.projects.len(), 2);
         assert_eq!(report.projects[0].name, "big");
         assert_eq!(report.projects[1].name, "small");
+    }
+
+    /// Two different session cwds inside the same repository (the repo root
+    /// and a subfolder) must aggregate into one project row instead of two,
+    /// once the resolved project root is used as the bucket key.
+    #[test]
+    fn two_cwds_in_the_same_repo_merge_into_one_project_row() {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path().join("repo");
+        fs::create_dir_all(repo_root.join(".git")).unwrap();
+        let subfolder = repo_root.join("app").join("src-tauri");
+        fs::create_dir_all(&subfolder).unwrap();
+        // JSON string literals can't carry raw Windows backslashes; forward
+        // slashes round-trip through normalize_project_path either way.
+        let root_cwd = repo_root.to_string_lossy().replace('\\', "/");
+        let sub_cwd = subfolder.to_string_lossy().replace('\\', "/");
+
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let content = format!(
+            "{}\n{}\n",
+            line("req-a", "2026-09-15T10:00:00Z", &root_cwd, 100, 10),
+            line("req-b", "2026-09-15T10:01:00Z", &sub_cwd, 100, 20),
+        );
+        fs::write(sessions.join("session.jsonl"), content).unwrap();
+
+        let (start, end) = window();
+        let report = read_usage(
+            &sessions,
+            start,
+            end,
+            &pricing::PriceOverrides::default(),
+            &mut ProjectRootCache::new(),
+        );
+        assert_eq!(report.projects.len(), 1, "both cwds share the same repo root");
+        assert_eq!(report.projects[0].totals.output_tokens, 30, "tokens from both cwds must sum");
+        assert_eq!(report.projects[0].name, "repo");
     }
 
     #[test]
@@ -344,7 +382,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         assert_eq!(report.totals.cost, None, "a model without a price row must never invent a cost");
     }
 
@@ -352,7 +390,7 @@ mod tests {
     fn empty_directory_with_no_session_files_is_ok_with_empty_totals() {
         let dir = tempdir().unwrap();
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         assert_eq!(report.status, crate::usage::AgentStatus::Ok);
         assert_eq!(report.totals.entries, 0);
         assert!(report.projects.is_empty());
@@ -367,7 +405,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         assert!(report.totals.cost.is_some());
         assert_eq!(report.totals.cost_basis, Some(crate::usage::CostBasis::ApiEquivalent));
     }
@@ -384,7 +422,7 @@ mod tests {
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         // claude-opus-5 cache_write_1h = 10.0 per 1M, not 6.25 (the 5m rate).
         assert_eq!(report.totals.cost, Some(10.0));
     }

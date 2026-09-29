@@ -54,6 +54,37 @@ async fn get_usage(app: tauri::AppHandle, window: usage::TimeWindow) -> Result<u
     .map_err(|e| format!("usage task panicked: {e}"))?
 }
 
+/// Full path to config.json, for the context menu's and the ⚙ cell's
+/// "Open config" to hand to the opener plugin. Returns the path even if the
+/// file somehow does not exist yet — `get_config` always creates it first on
+/// a real launch, so in practice this only runs after that.
+#[tauri::command]
+fn get_config_path(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = config::config_dir(&app)?;
+    Ok(dir.join("config.json").to_string_lossy().into_owned())
+}
+
+/// Creates pricing.json from the built-in template if it is missing, then
+/// returns its path, for "Open pricing file" to hand to the opener plugin.
+/// Never overwrites an existing file - see `config::ensure_pricing_file`.
+#[tauri::command]
+fn ensure_pricing_file(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = config::config_dir(&app)?;
+    let path = dir.join("pricing.json");
+    config::ensure_pricing_file(&path)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Exits the whole process, called by the context menu's "Quit Orbitbar".
+/// `app.exit(0)` tears the app down through Tauri's own shutdown path
+/// (closes every window, runs `on_exit` if one is ever added); a bare
+/// `window.close()` on the frontend only removes the window and leaves the
+/// process running in the background, which is the bug this command fixes.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 /// Resolve the monitor named in config ("primary" or a device name). Falls
 /// back to the current monitor when the persisted name no longer exists.
 fn resolve_monitor(
@@ -173,7 +204,14 @@ pub fn run() {
             position_right_center(&window, &monitor, cfg.margin, size)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_config, save_config, get_usage])
+        .invoke_handler(tauri::generate_handler![
+            get_config,
+            save_config,
+            get_usage,
+            quit_app,
+            get_config_path,
+            ensure_pricing_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
