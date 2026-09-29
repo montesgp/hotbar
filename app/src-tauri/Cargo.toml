@@ -30,6 +30,10 @@ dirs = "7"
 chrono = "0.4"
 rusqlite = { version = "0.40", features = ["bundled"] }
 
+# A second launch must hand over to the running bar, not open another one.
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 
