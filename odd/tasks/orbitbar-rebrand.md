@@ -152,8 +152,14 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
             hits left (BOM/Notepad-PowerShell-5.1 compat notes in config.rs, one past-tense
             History mention in architecture.md with no dead path, and the still-live
             `extensions/herdr/scripts/*.ps1` files).
-- [ ] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar` (after the folder
-      rename; verify the supported mechanism first).
+- [x] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar`. Engram v2.2.1 has no
+      rename command (`projects consolidate` only merges similar names), so: export
+      `--project herdr-omniroute` (backup kept outside the repo), rewrite `project` to
+      `orbitbar` with fresh session/sync ids (import dedupes by id; relations remapped), import,
+      verify, soft-delete `herdr-omniroute`. Result: `orbitbar` 55 obs / 24 prompts, old
+      project 0 obs. `engram init orbitbar` pins the name locally (`.engram/` gitignored).
+      **Pending (user):** rename the local folder `herdr-omniroute` → `orbitbar` after closing
+      every session using it; relaunch the bar from the new path so autostart re-registers.
 
 - [x] **O10 — Settings cell left-click opens the menu** (user, 2026-09-29): left click on the
   settings (`edit-config`) cell opens the same menu right-click opens today (Edit config,
@@ -363,5 +369,5 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 
 ## Next step
 
-O9 is done except `run:<cmd>` (open security decision left to the user). O7 (Engram project
-migration) is the remaining open task.
+All tasks done except `run:<cmd>` (security decision left to the user) and the local folder
+rename (user, after closing sessions). `dev` promoted to `main` via PR #6 (2026-09-29).
