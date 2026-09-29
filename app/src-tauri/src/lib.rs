@@ -3,7 +3,7 @@ mod config;
 mod launch;
 mod usage;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -121,6 +121,76 @@ fn resolve_monitor(
     Ok(window.current_monitor()?.unwrap_or(monitors[0].clone()))
 }
 
+/// Top-left of a window of `size` snapped to the right edge of a monitor,
+/// vertically centered, `margin` physical pixels in from the edge. Pure so the
+/// snap rule is testable; `monitor` is `(x, y, width, height)`.
+fn right_center_origin(monitor: (i32, i32, u32, u32), size: (u32, u32), margin: i32) -> (i32, i32) {
+    let (mx, my, mw, mh) = monitor;
+    let x = mx + (mw as i32 - size.0 as i32) - margin;
+    let y = my + (mh as i32 - size.1 as i32) / 2;
+    (x, y)
+}
+
+/// Monitor rectangle and window size (all physical pixels) for `snap_window`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapTarget {
+    monitor_x: i32,
+    monitor_y: i32,
+    monitor_width: u32,
+    monitor_height: u32,
+    width: u32,
+    height: u32,
+    margin: i32,
+}
+
+/// Snaps the window to the right-center of the given monitor at `size`,
+/// applying position AND size in one native operation.
+///
+/// Doing it as separate `set_size` / `set_position` calls lets the compositor
+/// show the in-between frame (new size at the old position), which for a
+/// right-anchored bar is a visible jump. On Windows this is one `SetWindowPos`.
+/// The window is `resizable: false`, which makes tao lock its min/max size to
+/// the size at that moment and clamp anything else, so `resizable` is toggled
+/// around the call to release and re-take that lock at the new size (a sync
+/// command runs on the main thread, so the three steps are strictly ordered).
+/// `SWP_NOCOPYBITS` is left off on purpose: the webview is a child surface
+/// composed by DWM, so nothing stale is blitted, and discarding the client
+/// bits could itself produce a blank frame.
+#[tauri::command]
+fn snap_window(window: WebviewWindow, target: SnapTarget) -> Result<(), String> {
+    let (x, y) = right_center_origin(
+        (target.monitor_x, target.monitor_y, target.monitor_width, target.monitor_height),
+        (target.width, target.height),
+        target.margin,
+    );
+    set_bounds(&window, x, y, target.width, target.height).map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
+fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> tauri::Result<()> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+
+    let hwnd = window.hwnd()?;
+    window.set_resizable(true)?;
+    // SAFETY: `hwnd` is the live handle of this window; the call has no
+    // pointer arguments beyond the handle itself.
+    let ok = unsafe {
+        SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, width as i32, height as i32, SWP_NOZORDER | SWP_NOACTIVATE)
+    };
+    let relock = window.set_resizable(false);
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    relock
+}
+
+#[cfg(not(windows))]
+fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> tauri::Result<()> {
+    window.set_size(PhysicalSize::new(width, height))?;
+    window.set_position(PhysicalPosition::new(x, y))
+}
+
 /// Position a window right-center of a monitor with the config margin.
 fn position_right_center(
     window: &WebviewWindow,
@@ -130,8 +200,11 @@ fn position_right_center(
 ) -> tauri::Result<()> {
     let m_pos = monitor.position();
     let m_size = monitor.size();
-    let x = m_pos.x + (m_size.width as i32 - size.width as i32) - margin;
-    let y = m_pos.y + (m_size.height as i32 - size.height as i32) / 2;
+    let (x, y) = right_center_origin(
+        (m_pos.x, m_pos.y, m_size.width, m_size.height),
+        (size.width, size.height),
+        margin,
+    );
     window.set_position(PhysicalPosition::new(x, y))
 }
 
@@ -220,7 +293,8 @@ pub fn run() {
             quit_app,
             get_config_path,
             ensure_pricing_file,
-            run_command
+            run_command,
+            snap_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -263,7 +337,20 @@ mod autostart_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{SIZE_COLLAPSED, SIZE_EXPANDED};
+    use super::{right_center_origin, SIZE_COLLAPSED, SIZE_EXPANDED};
+
+    /// The bar hugs the right edge (margin in) and is centered vertically.
+    #[test]
+    fn snaps_to_the_right_edge_centered_vertically() {
+        assert_eq!(right_center_origin((0, 0, 1920, 1080), (72, 400), 12), (1836, 340));
+    }
+
+    /// A secondary monitor's origin (here left of and above the primary, so
+    /// negative) is honored on both axes.
+    #[test]
+    fn honors_the_monitor_origin() {
+        assert_eq!(right_center_origin((-1920, -200, 1920, 1080), (72, 400), 12), (-84, 140));
+    }
 
     /// The crescent radii src/main.ts writes into `--ob-moon-rx` / `--ob-moon-ry`.
     fn moon_radii() -> (u32, u32) {

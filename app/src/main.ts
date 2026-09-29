@@ -6,7 +6,6 @@ import {
 } from "@tauri-apps/plugin-autostart";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import {
-  PhysicalPosition,
   PhysicalSize,
 } from "@tauri-apps/api/dpi";
 import {
@@ -200,31 +199,35 @@ export function renderCells(container: HTMLElement, items: Item[]): void {
   }
 }
 
-/** Right-center a physical window on a monitor, honoring the config margin. */
+/**
+ * Right-center a physical window of `size` on a monitor, honoring the config
+ * margin. The Rust `snap_window` command computes the target position and
+ * applies it together with the size in ONE native operation: separate
+ * set_size / set_position calls show an in-between frame (new size, old
+ * position) that makes the right-anchored bar visibly jump. It also toggles
+ * `resizable` around the change, because the window is created
+ * `resizable: false` and on Windows tao then locks min/max size to the size at
+ * that moment, silently clamping every later resize back to it.
+ */
 async function snapToMonitor(
   monitor: Monitor,
   size: PhysicalSize,
   margin: number,
 ): Promise<void> {
-  const x = monitor.position.x + monitor.size.width - size.width - margin;
-  const y = monitor.position.y + (monitor.size.height - size.height) / 2;
-  await win.setPosition(new PhysicalPosition(x, y));
+  await invoke("snap_window", {
+    target: {
+      monitorX: monitor.position.x,
+      monitorY: monitor.position.y,
+      monitorWidth: monitor.size.width,
+      monitorHeight: monitor.size.height,
+      width: size.width,
+      height: size.height,
+      margin,
+    },
+  });
 }
 
-/**
- * Resize + reposition the window for the requested collapse/panel state.
- *
- * The window is created `resizable: false` (there is no OS chrome to grab
- * with `decorations: false` anyway, so this only stops something else from
- * dragging an edge). On Windows that flag makes tao lock the window's
- * min/max inner size to whatever size it had at the moment `resizable`
- * turned false, and every `setSize` after that is silently clamped back to
- * that locked size — the bar never grows for the panel and the "moved but
- * still 72 wide" window a user sees is `snapToMonitor` positioning for the
- * size that was requested, not the size that was actually applied. Toggling
- * `setResizable` around the resize clears that lock, lets the real size
- * apply, then re-locks it at the new size so nothing else can drag it.
- */
+/** Resize + reposition the window for the requested collapse/panel state. */
 async function applyState(
   cfg: OrbitbarConfig,
   panelOpen: boolean,
@@ -233,9 +236,6 @@ async function applyState(
   const size = sizeFor(cfg.collapsed, panelOpen, menuOpen);
   const monitor = await currentMonitor();
   if (!monitor) return;
-  await win.setResizable(true);
-  await win.setSize(size);
-  await win.setResizable(false);
   await snapToMonitor(monitor, size, cfg.margin);
 }
 
@@ -290,13 +290,14 @@ function buildContextMenuActions(
   ];
 }
 
-/** Paints the menu card. `onSelect` runs before the action itself, so the
- * menu is always closed (and the window resized back down) whether the
- * action succeeds or fails. */
+/** Paints the menu card. `onSelect` is awaited before the action runs, so the
+ * menu is always fully closed (and the window resized back down) first and no
+ * action that re-renders or resizes races the close, whether the action
+ * succeeds or fails. */
 function renderContextMenu(
   el: HTMLElement,
   actions: (ContextMenuAction | "separator")[],
-  onSelect: () => void,
+  onSelect: () => Promise<void>,
 ): void {
   el.replaceChildren();
   for (const action of actions) {
@@ -324,8 +325,13 @@ function renderContextMenu(
       btn.append(mark, action.label);
     }
     btn.addEventListener("click", () => {
-      onSelect();
-      void action.run();
+      void (async () => {
+        try {
+          await onSelect();
+        } finally {
+          await action.run();
+        }
+      })();
     });
     el.appendChild(btn);
   }
@@ -617,44 +623,17 @@ async function openContextMenu(
   closePanel: () => Promise<void>,
   setMenuOpen: (open: boolean) => void,
   actions: (ContextMenuAction | "separator")[],
-  onSelect: () => void,
+  onSelect: () => Promise<void>,
 ): Promise<void> {
   const menu = contextMenuEl;
   if (!menu) return;
-  await withMaskedResize(async () => {
-    await closePanel();
-    setMenuOpen(true);
-    renderContextMenu(menu, actions, onSelect);
-    await applyState(cfg, false, true);
-    const size = sizeFor(cfg.collapsed, false, true);
-    positionContextMenu(menu, clickY, size.height);
-    menu.hidden = false;
-  });
-}
-
-/** Resolves after the browser has painted twice, so a state change made
- * before it is on screen before whatever follows. */
-function afterPaint(): Promise<void> {
-  return new Promise((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
-}
-
-/**
- * Runs a window resize with the page painted invisible (`body.resizing`, see
- * styles.css) and reveals it only once the new size, position and menu state
- * are settled. `applyState` resizes and repositions with separate native
- * calls, so without the mask each intermediate window (resized but not yet
- * moved, with newly exposed transparent area) is composited to the screen.
- */
-async function withMaskedResize(change: () => Promise<void>): Promise<void> {
-  document.body.classList.add("resizing");
-  try {
-    await change();
-    await afterPaint();
-  } finally {
-    document.body.classList.remove("resizing");
-  }
+  await closePanel();
+  setMenuOpen(true);
+  renderContextMenu(menu, actions, onSelect);
+  await applyState(cfg, false, true);
+  const size = sizeFor(cfg.collapsed, false, true);
+  positionContextMenu(menu, clickY, size.height);
+  menu.hidden = false;
 }
 
 /** Closes the menu and restores the window to its plain collapsed/expanded
@@ -662,7 +641,7 @@ async function withMaskedResize(change: () => Promise<void>): Promise<void> {
 async function closeContextMenu(cfg: OrbitbarConfig, setMenuOpen: (open: boolean) => void): Promise<void> {
   setMenuOpen(false);
   if (contextMenuEl) contextMenuEl.hidden = true;
-  await withMaskedResize(() => applyState(cfg, false, false));
+  await applyState(cfg, false, false);
 }
 
 /** Persist the current config object back to disk. */
@@ -951,7 +930,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         closePanel,
         setMenuOpen,
         await contextMenuActions(),
-        () => void closeContextMenu(cfg, setMenuOpen),
+        () => closeContextMenu(cfg, setMenuOpen),
       );
 
     const barEl = document.querySelector<HTMLElement>("#bar");

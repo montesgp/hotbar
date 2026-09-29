@@ -503,10 +503,3 @@ body.collapsed .tab:hover {
 .tab {
   display: none;
 }
-
-/* Set by main.ts while the window is being resized for the context menu, so
- * the intermediate frames (new size, old position) are never shown. The
- * window itself is transparent, hence nothing is left behind. */
-body.resizing > * {
-  visibility: hidden;
-}

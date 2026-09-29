@@ -202,6 +202,16 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   and persists `autoStart` in config.json, so users never edit the file for it. Route: same
   writer. Check: tsc, build; cargo test if Rust changes.
 
+- [ ] **O17 — No flash when a menu entry is selected** (user, 2026-09-29): choosing any settings
+  menu entry flashes the bar while the menu closes. Causes found: (1) `applyState` resizes and
+  moves the window in two native calls, and the O13 `withMaskedResize` hides the whole page
+  meanwhile, so the bar itself blinks; (2) `renderContextMenu` fires `onSelect()` (async close)
+  without awaiting it and runs the action concurrently, so actions that re-render or resize
+  (theme, reload, collapse, autostart) race the close. Fix: one atomic native move+resize
+  (Windows `SetWindowPos`; other OSes keep set_size+set_position), drop the page mask, and run
+  the action only after the close has finished. Route: delegated writer. Check: cargo test,
+  clippy, tsc, build; visual check by the user.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
