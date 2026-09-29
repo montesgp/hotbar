@@ -93,11 +93,11 @@ const PANEL_WIDTH = 320;
  * grows the height, not just the width.
  */
 const CONTEXT_MENU_WIDTH = 170;
-const CONTEXT_MENU_MIN_HEIGHT = 270;
-/** Seven entries plus two separators, sized from `.context-menu`'s own CSS;
+const CONTEXT_MENU_MIN_HEIGHT = 310;
+/** Eight entries plus three separators, sized from `.context-menu`'s own CSS;
  * kept as a constant instead of measured so opening the menu never needs an
  * extra hidden-then-remeasure paint. */
-const CONTEXT_MENU_HEIGHT_ESTIMATE = 246;
+const CONTEXT_MENU_HEIGHT_ESTIMATE = 283;
 
 const win = getCurrentWindow();
 
@@ -243,14 +243,18 @@ async function applyState(
 interface ContextMenuAction {
   label: string;
   run: () => void | Promise<void>;
-  /** Present only on the theme choices: true marks the one in effect. */
+  /** Present only on checkable entries: true marks the choice in effect. */
   checked?: boolean;
+  /** How a checkable entry behaves: "radio" (one of a group, the default) or
+   * an independent "checkbox". */
+  kind?: "radio" | "checkbox";
 }
 
 /**
  * The fixed entry list, in order. "Collapse"/"Expand" reflects `cfg.collapsed`
  * so the label always matches what the click will actually do, and the theme
- * choice in effect (`currentTheme`, the resolved palette name) carries a check.
+ * choice in effect (`currentTheme`, the resolved palette name) carries a check,
+ * and so does "Start with system" when `autostartOn` (the real OS registration).
  */
 function buildContextMenuActions(
   cfg: OrbitbarConfig,
@@ -260,9 +264,11 @@ function buildContextMenuActions(
     toggleCollapsed: () => void | Promise<void>;
     reloadConfig: () => void | Promise<void>;
     setTheme: (theme: ThemeName) => void | Promise<void>;
+    toggleAutostart: () => void | Promise<void>;
     quit: () => void | Promise<void>;
   },
   currentTheme: string,
+  autostartOn: boolean,
 ): (ContextMenuAction | "separator")[] {
   return [
     { label: "Edit config", run: handlers.openConfig },
@@ -272,6 +278,13 @@ function buildContextMenuActions(
     "separator",
     { label: "Light", checked: currentTheme === "light", run: () => handlers.setTheme("light") },
     { label: "Dark", checked: currentTheme === "dark", run: () => handlers.setTheme("dark") },
+    "separator",
+    {
+      label: "Start with system",
+      checked: autostartOn,
+      kind: "checkbox",
+      run: handlers.toggleAutostart,
+    },
     "separator",
     { label: "Quit Orbitbar", run: handlers.quit },
   ];
@@ -301,9 +314,9 @@ function renderContextMenu(
       btn.setAttribute("role", "menuitem");
       btn.textContent = action.label;
     } else {
-      // Radio-style entry: the check slot is always present so labels stay
+      // Checkable entry: the check slot is always present so labels stay
       // aligned whether or not this one is the current choice.
-      btn.setAttribute("role", "menuitemradio");
+      btn.setAttribute("role", action.kind === "checkbox" ? "menuitemcheckbox" : "menuitemradio");
       btn.setAttribute("aria-checked", String(action.checked));
       const mark = document.createElement("span");
       mark.className = "context-menu-check";
@@ -733,6 +746,16 @@ function bindAutostartCells(cells: HTMLElement, items: Item[]): Map<HTMLElement,
   return map;
 }
 
+/** The real OS registration; `fallback` when it cannot be read. */
+async function readAutostart(fallback: boolean): Promise<boolean> {
+  try {
+    return await isAutostartEnabled();
+  } catch (err) {
+    console.error("orbitbar: could not read autostart state", err);
+    return fallback;
+  }
+}
+
 /** Reads the real OS registration, not the config — they can disagree: the
  * user can revoke the Run key in OS settings without touching our config. */
 async function refreshAutostartUi(autostartCells: Map<HTMLElement, string>): Promise<void> {
@@ -883,6 +906,26 @@ window.addEventListener("DOMContentLoaded", async () => {
       await reloadConfig();
     };
 
+    // Flips the OS registration and persists the choice. Shared by the
+    // autostart cell and the menu's "Start with system" entry. The direction
+    // comes from the real OS state (the user may have revoked the entry
+    // outside the app), falling back to the config when it cannot be read.
+    // If the OS refuses the write, neither the config nor the UI changes.
+    const toggleAutostart = async () => {
+      const next = !(await readAutostart(cfg.autoStart));
+      try {
+        if (next) await enableAutostart();
+        else await disableAutostart();
+      } catch (err) {
+        console.error("orbitbar: autostart could not be changed", err);
+        await refreshAutostartUi(autostartCells);
+        return;
+      }
+      cfg.autoStart = next;
+      await persistConfig(cfg);
+      await refreshAutostartUi(autostartCells);
+    };
+
     const quit = async () => {
       try {
         await invoke("quit_app");
@@ -891,22 +934,23 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
-    const contextMenuActions = () =>
+    const contextMenuActions = async () =>
       buildContextMenuActions(
         cfg,
-        { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, quit },
+        { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, toggleAutostart, quit },
         themeName,
+        await readAutostart(cfg.autoStart),
       );
 
     // Shared by right-click on the bar and left-click on the settings cell,
     // so both open the very same menu anchored at the pointer.
-    const showContextMenu = (clientY: number) =>
+    const showContextMenu = async (clientY: number) =>
       openContextMenu(
         cfg,
         clientY,
         closePanel,
         setMenuOpen,
-        contextMenuActions(),
+        await contextMenuActions(),
         () => void closeContextMenu(cfg, setMenuOpen),
       );
 
@@ -938,19 +982,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         // report success it did not get: if the OS refuses the write we leave
         // both the config and the cell showing the old state.
         if (autostartCells.has(target)) {
-          const tooltip = autostartCells.get(target) ?? "";
-          const next = !cfg.autoStart;
-          try {
-            if (next) await enableAutostart();
-            else await disableAutostart();
-          } catch (err) {
-            console.error("orbitbar: autostart could not be changed", err);
-            applyAutostartUi(target, tooltip, cfg.autoStart);
-            return;
-          }
-          cfg.autoStart = next;
-          applyAutostartUi(target, tooltip, next);
-          await persistConfig(cfg);
+          await toggleAutostart();
           return;
         }
 

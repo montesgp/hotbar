@@ -148,7 +148,10 @@ beyond wiring the new item's `action` to the new `invoke()` call.
   mechanism per platform: a Registry Run entry on Windows, a LaunchAgent on
   macOS and an XDG autostart `.desktop` entry on Linux. `config.json`'s
   `autoStart` is the source of truth and is reconciled with the OS entry on
-  every launch; a debug build never registers itself.
+  every launch; a debug build never registers itself. The menu's "Start with
+  system" entry and the `toggle-autostart` cell share one frontend toggle
+  that flips the OS entry (direction taken from the real registration) and
+  then persists `autoStart`.
 - The webview is WebView2 on Windows, WKWebView on macOS and WebKitGTK 4.1 on
   Linux.
 - `pricing.json` lives next to `config.json` and is reloaded on every

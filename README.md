@@ -108,7 +108,7 @@ its own formats; build on the OS you are targeting.
 - **Right-click the bar** (or the collapsed tab), or **left-click the
   settings cell**, for the menu: edit `config.json`, open `pricing.json`,
   collapse or expand, reload the config without a restart, switch between
-  Light and Dark, or quit. Escape or a click outside closes the menu.
+  Light and Dark, turn **Start with system** on or off, or quit. Escape or a click outside closes the menu.
 - **Drag the bar** to move it; use the chevron at the top to collapse it to a
   tab.
 
@@ -142,7 +142,7 @@ above) and rewrites it when you change a setting from the app.
 | `monitor` | Monitor to dock on; `primary` by default. |
 | `margin` | Gap in pixels between the bar and the screen edge. |
 | `collapsed` | Whether the bar starts as the small tab. |
-| `autoStart` | Start Orbitbar at login (on by default; release builds only). |
+| `autoStart` | Start Orbitbar at login (on by default; release builds only). The menu's **Start with system** entry changes it for you: its check mark shows the real OS registration, and selecting it updates the OS entry and this field. |
 | `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`. |
 
 Item actions:
