@@ -230,7 +230,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   and fade did not remove it, so resizing the transparent WebView2 window itself is the
   suspect. Proposed next step (pending user decision): render the menu (and later the usage
   panel) in a separate pre-created always-on-top window shown beside the bar, so opening,
-  selecting and closing never resize the bar's window.
+  selecting and closing never resize the bar's window. (Declined; no decision pending.)
 - [x] **O20 — Leaner build output** (user, 2026-09-29: "eliminar tantas carpetas en los builds").
   `crate-type = ["rlib"]` (staticlib/cdylib are only for iOS/Android and left an extra
   `.dll/.lib/.pdb` set per build), `strip = true` already in the release profile (duplicate
@@ -260,6 +260,14 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   menu session). (6) Docs: no `~` in examples, tracker "Next step" current; single autostart
   read helper. Route: delegated writer. Check: cargo test (RED first where Rust changes),
   clippy, tsc, build; CI green on all three OSes.
+
+- [ ] **Follow-ups from the O22 review** (approved 2026-09-29, advisory, not blocking v0.1.0):
+  pin third-party actions in `release.yml` to commit SHAs; `run_command` re-reads config.json on
+  each click and a half-edited file would be quarantined (read without the quarantine path);
+  `closeContextMenu` returns an in-flight close before reading `resize`; release workflow does
+  not check the tag against the app version; no frontend tests for `isWebUrl`, the one-action
+  menu guard and the snap skip. Refuted: collapse from the menu does resize (`togglePanel` has
+  no early return).
 
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
