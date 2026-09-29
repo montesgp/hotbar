@@ -47,7 +47,6 @@ write:
   "theme": "classic",
   "fontSize": 10.0,
   "autoStart": true,
-  "usageWindow": "thisMonth",
   "items": [
     { "id": "claude", "label": "claude", "glyph": "0x2733", "action": "agent-usage:claude", "tooltip": "..." }
   ]

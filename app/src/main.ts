@@ -60,8 +60,6 @@ export interface OrbitbarConfig {
   fontSize: number;
   /** Desired autostart state. Rust reconciles the OS entry against it on start. */
   autoStart: boolean;
-  /** Persisted usage-panel window selector (Today | 7 days | 30 days | This month). */
-  usageWindow: TimeWindow;
   items: Item[];
 }
 
@@ -343,6 +341,9 @@ function setPanelUi(open: boolean): void {
 /** Which agent filter (or "all") is currently shown, so a window-selector
  * change re-fetches the same view instead of resetting to "all agents". */
 let usagePanelFilter: string | null = null;
+/** The selector's current window. Session-only: reset to Today whenever the
+ * panel opens from closed, never written to config. */
+let usageWindow: TimeWindow = "today";
 /** Guards against a stale response winning a race when the panel is
  * reopened, or the window changed, before the previous fetch resolved. */
 let usageFetchToken = 0;
@@ -423,7 +424,6 @@ function renderUsageSection(section: AgentSectionViewModel): HTMLElement {
 
 /** The window selector row (Today / 7 days / 30 days / This month). */
 function renderWindowSelector(
-  cfg: OrbitbarConfig,
   onChange: (next: TimeWindow) => void,
 ): HTMLElement {
   const row = document.createElement("div");
@@ -436,7 +436,7 @@ function renderWindowSelector(
     const opt = document.createElement("option");
     opt.value = option.value;
     opt.textContent = option.label;
-    if (option.value === cfg.usageWindow) opt.selected = true;
+    if (option.value === usageWindow) opt.selected = true;
     select.appendChild(opt);
   }
   select.addEventListener("change", () => {
@@ -447,18 +447,18 @@ function renderWindowSelector(
   return row;
 }
 
-function renderUsageLoading(body: HTMLElement, cfg: OrbitbarConfig, onWindowChange: (next: TimeWindow) => void): void {
+function renderUsageLoading(body: HTMLElement, onWindowChange: (next: TimeWindow) => void): void {
   body.replaceChildren();
-  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  body.appendChild(renderWindowSelector(onWindowChange));
   const loading = document.createElement("div");
   loading.className = "usage-line usage-line--dim";
   loading.textContent = "Loading usage…";
   body.appendChild(loading);
 }
 
-function renderUsageError(body: HTMLElement, cfg: OrbitbarConfig, onWindowChange: (next: TimeWindow) => void, message: string): void {
+function renderUsageError(body: HTMLElement, onWindowChange: (next: TimeWindow) => void, message: string): void {
   body.replaceChildren();
-  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  body.appendChild(renderWindowSelector(onWindowChange));
   const error = document.createElement("div");
   error.className = "usage-line usage-error";
   error.textContent = `Could not read usage: ${message}`;
@@ -467,13 +467,12 @@ function renderUsageError(body: HTMLElement, cfg: OrbitbarConfig, onWindowChange
 
 function renderUsageResult(
   body: HTMLElement,
-  cfg: OrbitbarConfig,
   onWindowChange: (next: TimeWindow) => void,
   snapshot: UsageSnapshot,
   filterAgent: string | null,
 ): void {
   body.replaceChildren();
-  body.appendChild(renderWindowSelector(cfg, onWindowChange));
+  body.appendChild(renderWindowSelector(onWindowChange));
   const vm = buildPanelViewModel(snapshot, filterAgent);
   if (vm.sections.length === 0) {
     const empty = document.createElement("div");
@@ -490,10 +489,10 @@ function renderUsageResult(
 /**
  * Opens (or re-fetches) the usage panel for `action` ("agent-usage" or
  * "agent-usage:<agent>"). `togglePanel` resizes/repositions the window;
- * `persistConfig` is passed in so a window-selector change survives restart.
+ * A window-selector change re-fetches but is never persisted: the panel
+ * starts on Today each time it opens (see `usageWindow`).
  */
 async function openUsagePanel(
-  cfg: OrbitbarConfig,
   action: string,
   body: HTMLElement,
   togglePanel: (open: boolean) => Promise<void>,
@@ -503,22 +502,21 @@ async function openUsagePanel(
 
   const fetchUsage = async (): Promise<void> => {
     const token = ++usageFetchToken;
-    renderUsageLoading(body, cfg, onWindowChange);
+    renderUsageLoading(body, onWindowChange);
     try {
-      const snapshot = await invoke<UsageSnapshot>("get_usage", { window: cfg.usageWindow });
+      const snapshot = await invoke<UsageSnapshot>("get_usage", { window: usageWindow });
       if (token !== usageFetchToken) return; // superseded by a newer fetch
-      renderUsageResult(body, cfg, onWindowChange, snapshot, usagePanelFilter);
+      renderUsageResult(body, onWindowChange, snapshot, usagePanelFilter);
     } catch (err) {
       if (token !== usageFetchToken) return;
       console.error("orbitbar: get_usage failed", err);
-      renderUsageError(body, cfg, onWindowChange, String(err));
+      renderUsageError(body, onWindowChange, String(err));
     }
   };
 
   function onWindowChange(next: TimeWindow): void {
-    if (cfg.usageWindow === next) return;
-    cfg.usageWindow = next;
-    void persistConfig(cfg);
+    if (usageWindow === next) return;
+    usageWindow = next;
     void fetchUsage();
   }
 
@@ -857,8 +855,11 @@ window.addEventListener("DOMContentLoaded", async () => {
         if (!body) return;
 
         if (isUsageAction(action)) {
+          // Opening from closed starts on Today; switching agent while the
+          // panel is already open keeps the user's current selection.
+          if (!panelOpen) usageWindow = "today";
           activePanelAction = action;
-          await openUsagePanel(cfg, action, body, togglePanel);
+          await openUsagePanel(action, body, togglePanel);
           return;
         }
 

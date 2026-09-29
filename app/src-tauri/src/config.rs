@@ -8,7 +8,6 @@
 //! If the file does not exist on first launch it is created with the defaults
 //! below, so end users always get an editable config without installing tools.
 
-use crate::usage::TimeWindow;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -28,13 +27,6 @@ pub struct AppConfig {
     /// serde default, a config written before this field existed simply gets
     /// true rather than failing to parse.
     pub auto_start: bool,
-    /// The time window the usage panel (`agent-usage` / `agent-usage:<agent>`)
-    /// reads by default and persists after the user changes the selector.
-    /// Defaults to `ThisMonth`, the month-to-date view most useful at a
-    /// glance; a config written before this field existed simply gets that
-    /// default rather than failing to parse, the same migration-safe pattern
-    /// `auto_start` uses above.
-    pub usage_window: TimeWindow,
     pub items: Vec<Item>,
 }
 
@@ -47,7 +39,6 @@ impl Default for AppConfig {
             theme: "classic".into(),
             font_size: 10.0,
             auto_start: true,
-            usage_window: TimeWindow::default(),
             items: default_items(),
         }
     }
@@ -398,21 +389,21 @@ mod tests {
         assert!(!cfg.auto_start);
     }
 
-    /// A config written before `usageWindow` existed must migrate to
-    /// `ThisMonth` rather than fail to parse, so the usage panel opens with a
-    /// sane default on an upgrade instead of bricking the config load.
+    /// The usage panel always opens on Today and the selector is never
+    /// persisted, so `usageWindow` is not part of the schema any more.
     #[test]
-    fn a_config_without_usage_window_defaults_to_this_month() {
-        let cfg: AppConfig = serde_json::from_str(r#"{"theme":"classic"}"#).unwrap();
-        assert_eq!(cfg.usage_window, TimeWindow::ThisMonth);
+    fn usage_window_is_not_persisted() {
+        let json = serde_json::to_string(&AppConfig::default()).unwrap();
+        assert!(!json.contains("usageWindow"), "selector must not be written: {json}");
     }
 
-    /// An explicit selector must be preserved across save/load, otherwise the
-    /// window choice the user made in the panel would never stick.
+    /// A config.json written by an older build still carries `usageWindow`;
+    /// it must load (the value is ignored), not be quarantined as invalid.
     #[test]
-    fn an_explicit_usage_window_is_preserved() {
-        let cfg: AppConfig = serde_json::from_str(r#"{"usageWindow":"last7Days"}"#).unwrap();
-        assert_eq!(cfg.usage_window, TimeWindow::Last7Days);
+    fn a_legacy_usage_window_key_is_ignored_on_load() {
+        let cfg: AppConfig =
+            serde_json::from_str(r#"{"theme":"classic","usageWindow":"last7Days"}"#).unwrap();
+        assert_eq!(cfg.theme, "classic");
     }
 
     /// "Open pricing file" must always open something useful, so a missing

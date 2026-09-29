@@ -61,8 +61,7 @@ whenever you change a setting from the app:
 | macOS | `~/Library/Application Support/com.orbitbar.app/config.json` |
 
 Key fields: `theme` (`classic` or `dark`), `fontSize`, `monitor`, `margin`,
-`collapsed`, `autoStart` (on by default), `usageWindow` (persists your last
-selector), and `items` — the cells rendered on the bar, each with an `id`,
+`collapsed`, `autoStart` (on by default), and `items` — the cells rendered on the bar, each with an `id`,
 `glyph`, `label`, `tooltip` and `action`.
 
 The default items open the usage panel per agent, a combined usage view, the
@@ -88,12 +87,13 @@ panel; clicking outside it closes it too.
 
 ### Usage panel
 
-The panel selector switches the window; totals and a per-project breakdown
+The panel always opens on Today; its selector switches the window while the
+panel is open (the choice is not saved). Totals and a per-project breakdown
 (top projects by output tokens) render below it. A rough text mock of what
 one agent's block looks like:
 
 ```text
-Claude Code                              This month ▾
+Claude Code                                 Today ▾
 ------------------------------------------------------
 output tokens   211,300      cost  ~$53.04 (API-equiv.)
 ------------------------------------------------------
