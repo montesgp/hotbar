@@ -170,7 +170,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   live. Route: delegated writer (config.rs, main.ts, styles.css, docs). Check: cargo test (RED
   first), clippy, tsc, build.
 
-- [ ] **O13 — Bar interaction polish** (user, 2026-09-29): (a) pressing a cell no longer
+- [x] **O13 — Bar interaction polish** (user, 2026-09-29): (a) pressing a cell no longer
   hides its glyph (`:active` painted bg = hoverFg); (b) no flash when the menu opens; (c) clicking
   the settings cell again closes the menu when open (toggle), opens it when closed; (d) light
   theme hover background a bit stronger amber (slightly, not much). Route: delegated writer.
@@ -358,6 +358,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   the right click uses, anchored at the click; the entry is now labeled "Edit config" and still
   opens config.json. Same checks as above (no Rust behavior change; tooltip text only). Not
   visually inspected; manual click pending.
+- 2026-09-29: O13 done, commit `a0b7a31`. (a) Root cause: `--ob-press-bg` was set to `hoverFg`, the same color as the glyph while pressed; it is now `color-mix(in srgb, hoverBg 78%, hoverFg)`. (b) Flash: `applyState` resizes and repositions with separate native calls, so the intermediate window (new size, old position, freshly exposed transparent area) was composited; open/close now run inside `withMaskedResize` (`body.resizing > * { visibility: hidden }`, revealed two frames after the card is placed). Inferred from code, not visually observed. (c) The settings cell toggles the menu; the window-level `pointerdown` closer skips that cell so its click does not see a closed menu and reopen it. (d) Light `hoverBg` `#F2E6C4` -> `#F0E0B0`, contrast with `#8A5A00` 4.77 -> 4.51. RED: `light_hover_uses_a_stronger_amber_wash` -> GREEN. Checks: `cargo test` 83/83 (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Visual check pending (user).
 
 ## Next step
 
