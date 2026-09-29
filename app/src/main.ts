@@ -4,6 +4,7 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
+import { openPath } from "@tauri-apps/plugin-opener";
 import {
   PhysicalPosition,
   PhysicalSize,
@@ -729,20 +730,53 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    // Reserved item actions not wired to real behavior yet (`run:<cmd>` is a
+    // `edit-config` (the ⚙ cell) and "Open config" both open config.json in
+    // the OS default editor via the opener plugin, scoped to the app config
+    // dir (see src-tauri/capabilities/default.json). `run:<cmd>` stays a
     // documented placeholder — running an arbitrary command is a security
-    // decision left to the user, see odd/tasks/orbitbar-rebrand.md O9).
+    // decision left to the user, see odd/tasks/orbitbar-rebrand.md O9.
     const openConfig = async () => {
-      const body = document.querySelector<HTMLElement>("#panel-body");
-      if (body) await showActionPlaceholder("settings", "edit-config", body, togglePanel);
+      try {
+        const path = await invoke<string>("get_config_path");
+        await openPath(path);
+      } catch (err) {
+        console.error("orbitbar: could not open config.json", err);
+      }
     };
+
+    // "Open pricing file" creates pricing.json from the built-in template
+    // first if it does not exist yet (ensure_pricing_file), so the editor
+    // never opens to a missing-file error.
     const openPricing = async () => {
-      const body = document.querySelector<HTMLElement>("#panel-body");
-      if (body) await showActionPlaceholder("menu", "open-pricing-file", body, togglePanel);
+      try {
+        const path = await invoke<string>("ensure_pricing_file");
+        await openPath(path);
+      } catch (err) {
+        console.error("orbitbar: could not open pricing.json", err);
+      }
     };
+
+    // Re-reads config.json and re-renders the bar in place — no restart, no
+    // window resize beyond what the new collapsed/monitor/margin call for.
+    // `cfg` is mutated in place (not replaced) so every closure that already
+    // captured it — togglePanel, openUsagePanel, enableDrag, the context menu
+    // actions — keeps seeing the fresh values without being rebound.
     const reloadConfig = async () => {
-      const body = document.querySelector<HTMLElement>("#panel-body");
-      if (body) await showActionPlaceholder("menu", "reload-config", body, togglePanel);
+      try {
+        const fresh = await invoke<ConfigPayload>("get_config");
+        Object.assign(cfg, fresh.config);
+        applyTheme(fresh.palette);
+        document.documentElement.style.setProperty("--ob-font-size", `${cfg.fontSize}px`);
+        if (cells) {
+          renderCells(cells, cfg.items);
+          autostartCells = bindAutostartCells(cells, cfg.items);
+          await refreshAutostartUi(autostartCells);
+        }
+        setCollapsedUi(cfg.collapsed);
+        await applyState(cfg, panelOpen, false);
+      } catch (err) {
+        console.error("orbitbar: could not reload config", err);
+      }
     };
 
     const quit = async () => {
@@ -828,9 +862,15 @@ window.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        // Other item actions (omniroute-status, run:cmd, edit-config, ...)
-        // are wired up separately; a cell click just demonstrates panel
-        // geometry until they land.
+        if (action === "edit-config") {
+          activePanelAction = action;
+          await openConfig();
+          return;
+        }
+
+        // Other item actions (omniroute-status, run:cmd, ...) are wired up
+        // separately; a cell click just demonstrates panel geometry until
+        // they land.
         activePanelAction = action;
         await showActionPlaceholder(target.dataset.id ?? "", action, body, togglePanel);
       });
