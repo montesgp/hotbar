@@ -167,7 +167,20 @@ async function snapToMonitor(
   await win.setPosition(new PhysicalPosition(x, y));
 }
 
-/** Resize + reposition the window for the requested collapse/panel state. */
+/**
+ * Resize + reposition the window for the requested collapse/panel state.
+ *
+ * The window is created `resizable: false` (there is no OS chrome to grab
+ * with `decorations: false` anyway, so this only stops something else from
+ * dragging an edge). On Windows that flag makes tao lock the window's
+ * min/max inner size to whatever size it had at the moment `resizable`
+ * turned false, and every `setSize` after that is silently clamped back to
+ * that locked size — the bar never grows for the panel and the "moved but
+ * still 72 wide" window a user sees is `snapToMonitor` positioning for the
+ * size that was requested, not the size that was actually applied. Toggling
+ * `setResizable` around the resize clears that lock, lets the real size
+ * apply, then re-locks it at the new size so nothing else can drag it.
+ */
 async function applyState(
   cfg: OrbitbarConfig,
   panelOpen: boolean,
@@ -175,7 +188,9 @@ async function applyState(
   const size = sizeFor(cfg.collapsed, panelOpen);
   const monitor = await currentMonitor();
   if (!monitor) return;
+  await win.setResizable(true);
   await win.setSize(size);
+  await win.setResizable(false);
   await snapToMonitor(monitor, size, cfg.margin);
 }
 
@@ -263,6 +278,9 @@ function renderUsageSection(section: AgentSectionViewModel): HTMLElement {
     for (const project of section.topProjects) {
       const row = document.createElement("div");
       row.className = "usage-project-row";
+      // The full normalized path, so a disambiguated or truncated name never
+      // loses the real location.
+      row.title = project.path;
 
       const name = document.createElement("span");
       name.className = "usage-project-name";
@@ -495,13 +513,25 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     let panelOpen = false;
+    // The action the open panel is showing (a cell's `data-action`, or the
+    // synthetic id below for the placeholder demo panel). Clicking the same
+    // cell again, Escape, or the panel's close button all close the panel;
+    // tracking this is what tells a second click on the same cell "close"
+    // apart from "switch to this agent".
+    let activePanelAction: string | null = null;
     setCollapsedUi(cfg.collapsed);
     setPanelUi(panelOpen);
 
     const togglePanel = async (open: boolean) => {
       panelOpen = open;
+      if (!open) activePanelAction = null;
       setPanelUi(panelOpen);
       await applyState(cfg, panelOpen);
+    };
+
+    const closePanel = async () => {
+      if (!panelOpen) return;
+      await togglePanel(false);
     };
 
     const collapseBtn = document.querySelector<HTMLButtonElement>("#collapse");
@@ -551,10 +581,19 @@ window.addEventListener("DOMContentLoaded", async () => {
         }
 
         const action = target.dataset.action ?? "";
+
+        // Clicking the cell that is already driving the open panel closes
+        // it, same as Escape or the close button.
+        if (panelOpen && activePanelAction === action) {
+          await closePanel();
+          return;
+        }
+
         const body = document.querySelector<HTMLElement>("#panel-body");
         if (!body) return;
 
         if (isUsageAction(action)) {
+          activePanelAction = action;
           await openUsagePanel(cfg, action, body, togglePanel);
           return;
         }
@@ -562,6 +601,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         // Other item actions (omniroute-status, run:cmd, edit-config, ...)
         // are wired up separately; a cell click just demonstrates panel
         // geometry until they land.
+        activePanelAction = action;
         body.replaceChildren();
         const line = document.createElement("div");
         line.textContent = `${target.dataset.id}: ${action}`;
@@ -569,6 +609,18 @@ window.addEventListener("DOMContentLoaded", async () => {
         await togglePanel(true);
       });
     }
+
+    const panelCloseBtn = document.querySelector<HTMLButtonElement>("#panel-close");
+    if (panelCloseBtn) {
+      panelCloseBtn.addEventListener("click", () => {
+        void closePanel();
+      });
+    }
+
+    window.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape") return;
+      void closePanel();
+    });
 
     enableDrag(cfg);
   } catch (err) {

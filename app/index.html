@@ -10,15 +10,28 @@
 
   <body>
     <!--
-      The crescent wraps the panel and the bar column together, mirroring the
-      WPF structure where one rounded Border held both Grid columns. The right
-      edge stays flat against the monitor; the left edge is the bulge.
+      Two independent shapes side by side, unlike the WPF original's single
+      Border: the crescent silhouette belongs to the 72px bar alone (`#bar`,
+      clipped to its own border-radius), and the panel is its own lightly
+      rounded rectangular card immediately to its left. Nesting the panel
+      inside the bar's `overflow: hidden` crescent clips wide content (long
+      project paths, the window-select text) against the curve instead of
+      the panel's own straight edge.
     -->
-    <main id="bar" class="bar" data-tauri-drag-region>
-      <aside id="panel" class="panel" hidden>
-        <div id="panel-body" class="panel-body"></div>
-      </aside>
+    <aside id="panel" class="panel" hidden>
+      <button
+        id="panel-close"
+        class="panel-close"
+        title="Close panel"
+        aria-label="Close panel"
+        data-tauri-drag-region="false"
+      >
+        &#10005;
+      </button>
+      <div id="panel-body" class="panel-body"></div>
+    </aside>
 
+    <main id="bar" class="bar" data-tauri-drag-region>
       <div class="bar-col" data-tauri-drag-region>
         <button
           id="collapse"
