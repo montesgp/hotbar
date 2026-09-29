@@ -129,6 +129,30 @@ body.moon .bar {
   border: 1px solid var(--ob-bar-border);
   border-radius: 12px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  /* Firefox/standard thin scrollbar, styled with the bar's own tokens
+   * instead of the default OS scrollbar. The 12px right padding above
+   * already leaves room for the 7px thumb, so scrolled content never sits
+   * under it. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--ob-text-dim) transparent;
+}
+
+/* WebView2/WebKit equivalent of the standard scrollbar-* properties above. */
+.panel::-webkit-scrollbar {
+  width: 7px;
+}
+
+.panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  background: var(--ob-text-dim);
+  border-radius: var(--ob-radius-handle);
+}
+
+.panel::-webkit-scrollbar-thumb:hover {
+  background: var(--ob-hover-fg);
 }
 
 .panel[hidden] {
