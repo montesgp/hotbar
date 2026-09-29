@@ -175,7 +175,10 @@ are passed to the program as plain text. The program runs detached: Orbitbar
 does not wait for it, and it keeps running if you quit the bar. It starts only
 when you click the cell. If it cannot be started, the panel shows the error.
 A console program opens its own console window; a graphical program opens
-only its own window.
+only its own window. On Windows a bare program name is looked up on `PATH` with
+each `PATHEXT` extension, so `run:code` finds VS Code's `code.cmd` and other
+`.cmd`/`.bat` launchers, not only `.exe` files. The command comes from
+`config.json`, which Orbitbar reads when you click the cell.
 
 ```json
 { "id": "editor", "glyph": "0x270E", "label": "editor", "tooltip": "Open my project", "action": "run:code \"C:/Projects/my app\"" }
@@ -185,7 +188,7 @@ only its own window.
 | --- | --- |
 | Windows | `run:notepad.exe`, or `run:code C:\Projects\my-app` |
 | macOS | `run:open -a Terminal` (`open` is a program on macOS) |
-| Linux | `run:code ~/projects/my-app` (a `~` is not expanded without a shell; use the full path) |
+| Linux | `run:code /home/me/projects/my-app` (there is no shell, so `~` is not expanded: use the full path) |
 
 The default config includes an example cell, `github`, whose action uses
 `open:` to open the Orbitbar repository. It illustrates what a cell can do

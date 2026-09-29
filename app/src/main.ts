@@ -231,8 +231,8 @@ function applyExamplesVisibility(container: HTMLElement, show: boolean): void {
  * set_size / set_position calls show an in-between frame (new size, old
  * position) that makes the right-anchored bar visibly jump. It also toggles
  * `resizable` around the change, because the window is created
- * `resizable: false` and on Windows tao then locks min/max size to the size at
- * that moment, silently clamping every later resize back to it.
+ * `resizable: false` and the toolkit (tao) then locks min/max size to the size
+ * at that moment, silently clamping every later resize back to it.
  */
 async function snapToMonitor(
   monitor: Monitor,
@@ -346,8 +346,9 @@ function buildContextMenuActions(
   ];
 }
 
-/** Paints the menu card. `onSelect` is awaited before the action runs, so the
- * menu is always fully closed (faded out, window resized back down unless the
+/** Paints the menu card. The first entry clicked wins: the card is marked
+ * `.chosen` (no pointer events) and later clicks are ignored. `onSelect` is
+ * awaited before the action runs, so the menu is always fully closed (faded out, window resized back down unless the
  * action resizes it itself) first and no action that re-renders or resizes
  * races the close, whether the action succeeds or fails. */
 function renderContextMenu(
@@ -356,6 +357,10 @@ function renderContextMenu(
   onSelect: (resize: boolean) => Promise<void>,
 ): void {
   el.replaceChildren();
+  el.classList.remove("chosen");
+  // One action per menu session: the card stays in the DOM while it fades out,
+  // so a second click must not run a second entry.
+  let chosen = false;
   for (const action of actions) {
     if (action === "separator") {
       const sep = document.createElement("hr");
@@ -381,6 +386,9 @@ function renderContextMenu(
       btn.append(mark, action.label);
     }
     btn.addEventListener("click", () => {
+      if (chosen) return;
+      chosen = true;
+      el.classList.add("chosen");
       void (async () => {
         try {
           await onSelect(!action.resizesWindow);
@@ -438,16 +446,17 @@ function isWebUrl(raw: string): boolean {
   }
 }
 
-/** Runs a launch action (`open:<url>` or `run:<program> [args]`). Returns an
- * error message for the panel, or null on success. */
-async function runLaunchAction(action: string): Promise<string | null> {
+/** Runs a launch action (`open:<url>` or `run:<program> [args]`). A `run:` sends
+ * only the item id: the backend looks the command up in its own config.
+ * Returns an error message for the panel, or null on success. */
+async function runLaunchAction(id: string, action: string): Promise<string | null> {
   try {
     if (action.startsWith("open:")) {
       const url = action.slice("open:".length).trim();
       if (!isWebUrl(url)) return `open: accepts only http:// and https:// URLs (got "${url}")`;
       await openUrl(url);
     } else {
-      await invoke("run_command", { command: action.slice("run:".length) });
+      await invoke("run_command", { id });
     }
     return null;
   } catch (err) {
@@ -841,25 +850,23 @@ function paintAutostart(autostartCells: Map<HTMLElement, string>, on: boolean): 
   }
 }
 
-/** The real OS registration; `fallback` when it cannot be read. */
-async function readAutostart(fallback: boolean): Promise<boolean> {
+/** The real OS registration, not the config: they can disagree, since the user
+ * can revoke the Run key in OS settings without touching our config. `null`
+ * when it cannot be read; callers pick their own fallback. */
+async function readAutostart(): Promise<boolean | null> {
   try {
     return await isAutostartEnabled();
   } catch (err) {
     console.error("orbitbar: could not read autostart state", err);
-    return fallback;
+    return null;
   }
 }
 
-/** Reads the real OS registration, not the config — they can disagree: the
- * user can revoke the Run key in OS settings without touching our config. */
+/** Repaints the autostart cells from the real OS registration. */
 async function refreshAutostartUi(autostartCells: Map<HTMLElement, string>): Promise<void> {
   if (autostartCells.size === 0) return;
-  try {
-    paintAutostart(autostartCells, await isAutostartEnabled());
-  } catch (err) {
-    console.error("orbitbar: could not read autostart state", err);
-  }
+  const on = await readAutostart();
+  if (on !== null) paintAutostart(autostartCells, on);
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -978,7 +985,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const reloadConfig = async () => {
       try {
         const fresh = await invoke<ConfigPayload>("get_config");
-        const autostartOn = await readAutostart(fresh.config.autoStart);
+        const autostartOn = (await readAutostart()) ?? fresh.config.autoStart;
         Object.assign(cfg, fresh.config);
         applyTheme(fresh.palette);
         themeName = fresh.palette.name;
@@ -1017,7 +1024,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     // outside the app), falling back to the config when it cannot be read.
     // If the OS refuses the write, neither the config nor the UI changes.
     const toggleAutostart = async () => {
-      const next = !(await readAutostart(cfg.autoStart));
+      const next = !((await readAutostart()) ?? cfg.autoStart);
       try {
         if (next) await enableAutostart();
         else await disableAutostart();
@@ -1051,7 +1058,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         cfg,
         { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, toggleAutostart, toggleExamples, quit },
         themeName,
-        await readAutostart(cfg.autoStart),
+        (await readAutostart()) ?? cfg.autoStart,
       );
 
     // Shared by right-click on the bar and left-click on the settings cell,
@@ -1125,7 +1132,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         // Launch actions act in place: on success the panel is left as it is,
         // on failure the reason is shown in the panel like any action error.
         if (action.startsWith("open:") || action.startsWith("run:")) {
-          const failure = await runLaunchAction(action);
+          const failure = await runLaunchAction(target.dataset.id ?? "", action);
           if (failure !== null) {
             activePanelAction = action;
             await showPanelMessage(failure, body, togglePanel);
