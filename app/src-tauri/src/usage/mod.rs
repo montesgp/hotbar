@@ -264,9 +264,16 @@ fn resolve_project_root_uncached(cwd: &str) -> String {
         return normalized_cwd;
     }
 
-    let start = Path::new(&normalized_cwd);
-    if !start.exists() {
-        return normalized_cwd;
+    // A deleted cwd (a removed worktree, a deleted subfolder) starts the walk
+    // from its nearest surviving ancestor, so it still rolls up into the repo
+    // that contained it. If no repo is found above it, the fallback below
+    // keeps the original path rather than the ancestor's.
+    let mut start = Path::new(&normalized_cwd);
+    while !start.exists() {
+        match start.parent() {
+            Some(parent) => start = parent,
+            None => return normalized_cwd,
+        }
     }
 
     // Never walk past the user's home directory. Dotfiles managed as a bare
@@ -538,6 +545,30 @@ mod tests {
         let mut cache = ProjectRootCache::new();
         let root = resolve_project_root(missing, &mut cache);
         assert_eq!(root, normalize_project_path(missing));
+    }
+
+    /// A removed worktree or deleted subfolder of a repo that still exists
+    /// must roll up into that repo, not linger as its own row.
+    #[test]
+    fn resolve_project_root_rolls_a_deleted_subfolder_into_its_surviving_repo() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        let deleted = dir.path().join(".claude").join("worktrees").join("agent-gone");
+
+        let mut cache = ProjectRootCache::new();
+        let root = resolve_project_root(&deleted.to_string_lossy(), &mut cache);
+        assert_eq!(root, normalize_project_path(&dir.path().to_string_lossy()));
+    }
+
+    /// A deleted folder with no repo above it keeps its own path.
+    #[test]
+    fn resolve_project_root_keeps_a_deleted_folder_outside_any_repo() {
+        let dir = tempdir().unwrap();
+        let deleted = dir.path().join("gone-project");
+
+        let mut cache = ProjectRootCache::new();
+        let root = resolve_project_root(&deleted.to_string_lossy(), &mut cache);
+        assert_eq!(root, normalize_project_path(&deleted.to_string_lossy()));
     }
 
     #[test]
