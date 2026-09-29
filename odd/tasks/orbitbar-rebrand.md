@@ -251,6 +251,16 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   release process. Then `v0.1.0` from `main`. Route: delegated writer; release run monitored by
   the coordinator.
 
+- [ ] **O22 — Pre-release fixes from the PR #9 review** (user, 2026-09-29: fix all six, then
+  publish v0.1.0). (1) Release publishes only when every platform built: draft release, then a
+  publish job after the matrix. (2) `run:` on Windows resolves `.cmd`/`.bat` shims via
+  `PATHEXT` (e.g. `code`). (3) `run_command` validated in Rust: the frontend sends the item id,
+  the backend resolves its `run:` action from the loaded config. (4) macOS/Linux resize keeps the
+  resizable toggle. (5) Menu entries ignore clicks while the menu is closing (one action per
+  menu session). (6) Docs: no `~` in examples, tracker "Next step" current; single autostart
+  read helper. Route: delegated writer. Check: cargo test (RED first where Rust changes),
+  clippy, tsc, build; CI green on all three OSes.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
