@@ -119,8 +119,15 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       screenshots of closed / open / switch / close states inspected (parent re-checked two);
       `cargo test` 69/69, clippy, `tsc`, `npm run build` clean. Lesson: O5b was marked done
       without opening the panel — UI tasks now require screenshot verification.
-- [ ] **O9 — Wire the remaining item actions**: `edit-config` (open config.json and
-      pricing.json in the OS default editor) and `run:<cmd>`; today they show a placeholder.
+- [x] **O9 — Wire the remaining item actions.** `edit-config` (the ⚙ cell and the context
+      menu's "Open config") opens config.json in the OS default editor via
+      `@tauri-apps/plugin-opener` `openPath`, scoped to the app config dir
+      (`opener:allow-open-path` with `$APPCONFIG/**` in `capabilities/default.json`). "Open
+      pricing file" creates `pricing.json` from a built-in template (`config::ensure_pricing_file`,
+      mirrors `pricing.example.json` with an empty `models` table) if missing, never overwrites
+      an existing one, then opens it the same way. `run:<cmd>` **stays a documented placeholder**
+      — running an arbitrary command is a security decision left to the user, not wired here.
+      Done in polish Unit 6 below, full evidence there.
 - [ ] **O5 — Usage readers in Rust** (umbrella) (claude jsonl, codex jsonl, opencode sqlite, pricing
       table), per agent and per project, configurable time window; wired to the
       `agent-usage` panel. Parity with the legacy widget numbers on the author's machine.
@@ -184,6 +191,55 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       thumb, transparent track. Commit `da47a67`. Evidence: `tsc --noEmit` + `npm run build`
       OK; screenshot of a scrolled panel inspected — thin styled thumb visible, no content
       hidden under it.
+- [x] **Unit 5 — Right-click context menu with Quit** (user: "the toolbar has no exit or
+      close; it should have one and that would kill the process"). Right-clicking `#bar` or
+      the collapsed `#tab` opens a card styled with the existing `--ob-*` tokens (same look as
+      `.panel`: rounded, bar-border, box-shadow), never the WebView2 default menu (suppressed
+      app-wide with `window.addEventListener("contextmenu", preventDefault)`). Entries: Open
+      config, Open pricing file, Collapse/Expand, Reload config, a separator, Quit Orbitbar.
+      Escape and click-outside both close it, same as the panel. New Rust command `quit_app`
+      calls `app.exit(0)` (not `window.close()`, which only removes the window and leaves the
+      process running — the exact bug reported). **Design decision — in-webview card, not
+      Tauri's native `tauri::menu` popup:** the requirement is a menu that looks like the rest
+      of the bar (`--ob-*` tokens, hover state); an OS-drawn native popup cannot be styled with
+      CSS and would look inconsistent across Windows/macOS/Linux, so it was rejected even
+      though it needs no window resizing. Instead the card reuses the resize-and-snap technique
+      `applyState` already uses for the usage panel (`app/src/main.ts` `sizeFor`/`applyState`
+      gained a `menuOpen` parameter): the window temporarily widens left by
+      `CONTEXT_MENU_WIDTH` (170px) — and, only when collapsed (46px is shorter than the menu),
+      grows to `CONTEXT_MENU_MIN_HEIGHT` (210px) too — then snaps back on close. No new Tauri
+      capability needed (no `core:menu:*`) since the popup is DOM, not native. Commit `08707b0`.
+      Route: direct inline (one bounded writer session, `app/src/main.ts`, `app/index.html`,
+      `app/src/styles.css`, `app/src-tauri/src/lib.rs`). Evidence: `cargo build`/`cargo test`
+      79/79 (1 ignored) clean; `tsc --noEmit` clean; screenshots of the menu expanded (242x400)
+      and collapsed (216x210) inspected — all 5 entries + separator fully readable in both
+      states (fixed a real bug found this way: the separator used `--ob-bar-border`, which
+      equals `--ob-panel` in both shipped themes and was invisible — changed to
+      `--ob-text-dim` at 35% opacity). Quit verified end-to-end: `Get-Process orbitbar` and a
+      `Get-CimInstance` sweep for `orbitbar|tauri dev|vite` showed nothing after clicking Quit,
+      including the dev-server-launched process tree (npm → vite → cargo → orbitbar.exe all
+      exited, no orphaned `msedgewebview2.exe`).
+- [x] **Unit 6 — Wire `edit-config` / "Open pricing file" / "Reload config"** (O9, minus
+      `run:<cmd>`). The ⚙ cell and the menu's "Open config" call `get_config_path` then
+      `@tauri-apps/plugin-opener`'s `openPath`; "Open pricing file" calls the new
+      `ensure_pricing_file` command first (creates `pricing.json` from a built-in template —
+      same `_readme` as `pricing.example.json`, empty `models` table — only if missing; never
+      touches an existing file) then opens it the same way. Opener scoped to the app config dir
+      only: `capabilities/default.json` gained `{"identifier":"opener:allow-open-path","allow":
+      [{"path":"$APPCONFIG/**"}]}` (the bare `opener:default` set does not include
+      `allow-open-path`). "Reload config" re-invokes `get_config` and mutates the existing
+      `cfg` object in place (`Object.assign`) so every closure that already captured it keeps
+      working without rebinding; cells, theme and autostart-cell bindings are re-rendered.
+      `run:<cmd>` stays an explicit placeholder — running an arbitrary command is a security
+      decision left to the user, not made here. TDD: RED (`ensure_pricing_file` unresolved,
+      3 tests) → GREEN, `cargo test` 79/79 (1 ignored). Route: direct inline, same session as
+      Unit 5. Evidence: `cargo clippy --all-targets` clean; `npx tsc --noEmit` clean;
+      `npm run build` OK; end-to-end on a live `npm run tauri dev` instance — "Open config"
+      launched VS Code on `%APPDATA%\com.orbitbar.app\config.json` (closed after, verified no
+      `Code.exe` left); "Open pricing file" created `pricing.json` (verified its exact template
+      content) and opened it the same way (closed after); "Reload config" with `theme` hand-
+      edited to `dark` on disk re-rendered the bar in the dark palette live, no restart
+      (reverted to `classic` after). Commit `78c7a1d`.
 
 ## Checks
 
@@ -223,8 +279,19 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   `agent-a089898dab7b534a6` stayed a separate row under Claude, consistent with the documented
   fallback (its session cwd has no reachable `.git` ancestor on this machine, e.g. a deleted
   worktree checkout).
+- 2026-09-28: same branch, second bounded-writer session — Units 5-6 above (user: "the toolbar
+  has no exit or close; it should have one and that would kill the process"). Commits `08707b0`
+  (menu + quit) and `78c7a1d` (wiring). Full verification against two fresh `npm run tauri dev`
+  instances, killed after each check (no leftover `orbitbar.exe`/`cargo`/`vite` process
+  confirmed via `Get-CimInstance` after every session, including after Quit itself). Automation
+  note for any future screenshot-driven verification of this bar: `mouse_event` down/up alone is
+  unreliable against this WebView2 window — it needs a `SetForegroundWindow` (with an Alt-tap to
+  dodge the foreground-lock timeout) plus a tiny relative `MOUSEEVENTF_MOVE` immediately before
+  the click, or WebView2 does not register the hit-test; the window resize after a menu
+  open/close is also asynchronous and needs ~1-2s before `GetWindowRect` reflects it, not the
+  ~700ms that was tried first.
 
 ## Next step
 
-O9 (wire edit-config / run:<cmd> actions) or O7 (Engram project migration), whichever the
-user wants next.
+O9 is done except `run:<cmd>` (open security decision left to the user). O7 (Engram project
+migration) is the remaining open task.
