@@ -259,7 +259,7 @@ function buildContextMenuActions(
   currentTheme: string,
 ): (ContextMenuAction | "separator")[] {
   return [
-    { label: "Open config", run: handlers.openConfig },
+    { label: "Edit config", run: handlers.openConfig },
     { label: "Open pricing file", run: handlers.openPricing },
     { label: cfg.collapsed ? "Expand" : "Collapse", run: handlers.toggleCollapsed },
     { label: "Reload config", run: handlers.reloadConfig },
@@ -322,7 +322,7 @@ function positionContextMenu(el: HTMLElement, clickY: number, windowHeight: numb
 }
 
 /** The shared fallback for an item action that has no real behavior yet
- * (`run:<cmd>`, and — until wired — the context menu's Open config / Open
+ * (`run:<cmd>`, and — until wired — the context menu's Edit config / Open
  * pricing entries): show which id/action fired inside the panel instead of
  * doing nothing, so the wiring can be inspected before it lands. */
 async function showActionPlaceholder(
@@ -754,10 +754,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    // `edit-config` (the ⚙ cell) and "Open config" both open config.json in
-    // the OS default editor via the opener plugin, scoped to the app config
-    // dir (see src-tauri/capabilities/default.json). `run:<cmd>` stays a
-    // documented placeholder — running an arbitrary command is a security
+    // The menu's "Edit config" entry (reached from the ⚙ cell or a right
+    // click) opens config.json in the OS default editor via the opener
+    // plugin, scoped to the app config dir (see
+    // src-tauri/capabilities/default.json). `run:<cmd>` stays a documented
+    // placeholder — running an arbitrary command is a security
     // decision left to the user, see odd/tasks/orbitbar-rebrand.md O9.
     const openConfig = async () => {
       try {
@@ -827,19 +828,23 @@ window.addEventListener("DOMContentLoaded", async () => {
         themeName,
       );
 
+    // Shared by right-click on the bar and left-click on the settings cell,
+    // so both open the very same menu anchored at the pointer.
+    const showContextMenu = (clientY: number) =>
+      openContextMenu(
+        cfg,
+        clientY,
+        closePanel,
+        setMenuOpen,
+        contextMenuActions(),
+        () => void closeContextMenu(cfg, setMenuOpen),
+      );
 
     const barEl = document.querySelector<HTMLElement>("#bar");
     if (barEl) {
       barEl.addEventListener("contextmenu", (ev) => {
         ev.preventDefault();
-        void openContextMenu(
-          cfg,
-          (ev as MouseEvent).clientY,
-          closePanel,
-          setMenuOpen,
-          contextMenuActions(),
-          () => void closeContextMenu(cfg, setMenuOpen),
-        );
+        void showContextMenu((ev as MouseEvent).clientY);
       });
     }
 
@@ -878,6 +883,14 @@ window.addEventListener("DOMContentLoaded", async () => {
 
         const action = target.dataset.action ?? "";
 
+        // The settings cell opens the context menu (where "Edit config"
+        // lives) instead of acting directly. It never becomes the panel's
+        // active action: the menu closes any open panel first.
+        if (action === "edit-config") {
+          await showContextMenu((ev as MouseEvent).clientY);
+          return;
+        }
+
         // Clicking the cell that is already driving the open panel closes
         // it, same as Escape or the close button.
         if (panelOpen && activePanelAction === action) {
@@ -894,12 +907,6 @@ window.addEventListener("DOMContentLoaded", async () => {
           if (!panelOpen) usageWindow = "today";
           activePanelAction = action;
           await openUsagePanel(action, body, togglePanel);
-          return;
-        }
-
-        if (action === "edit-config") {
-          activePanelAction = action;
-          await openConfig();
           return;
         }
 

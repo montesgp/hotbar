@@ -54,8 +54,8 @@ async fn get_usage(app: tauri::AppHandle, window: usage::TimeWindow) -> Result<u
     .map_err(|e| format!("usage task panicked: {e}"))?
 }
 
-/// Full path to config.json, for the context menu's and the ⚙ cell's
-/// "Open config" to hand to the opener plugin. Returns the path even if the
+/// Full path to config.json, for the context menu's
+/// "Edit config" to hand to the opener plugin. Returns the path even if the
 /// file somehow does not exist yet — `get_config` always creates it first on
 /// a real launch, so in practice this only runs after that.
 #[tauri::command]

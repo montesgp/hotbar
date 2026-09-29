@@ -300,7 +300,7 @@ fn default_items() -> Vec<Item> {
             label: "settings".into(),
             glyph: "0x2699".into(),
             action: "edit-config".into(),
-            tooltip: "Open orbitbar config".into(),
+            tooltip: "Orbitbar menu - edit config, theme, quit".into(),
         },
         Item {
             id: "autostart".into(),
