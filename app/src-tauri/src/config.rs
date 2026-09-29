@@ -126,14 +126,14 @@ const PALETTE_DARK: &str = r##"{
 
 /// Same crescent as `PALETTE_DARK`: every shape token is identical and only
 /// the colors change. Text and dim text keep at least 4.5:1 contrast on the
-/// panel, and the hover accent is a dark amber on a pale amber wash.
+/// panel, and the hover accent is a dark amber on a light amber wash.
 const PALETTE_LIGHT: &str = r##"{
   "name": "light",
   "background": "#F4F4F8",
   "panel": "#F0F0F5",
   "text": "#22222B",
   "textDim": "#62626F",
-  "hoverBg": "#F2E6C4",
+  "hoverBg": "#F0E0B0",
   "hoverFg": "#8A5A00",
   "radiusBar": 22.0,
   "radiusCell": 22.0,
@@ -339,6 +339,15 @@ mod tests {
         for name in ["classic", "clasci", ""] {
             assert_eq!(palette_for(name).name, "dark", "theme {name:?}");
         }
+    }
+
+    /// Light hover wash: a slightly stronger amber than the first cut
+    /// (`#F2E6C4`), still at least 4.5:1 against the hover foreground.
+    #[test]
+    fn light_hover_uses_a_stronger_amber_wash() {
+        let p = palette_for("light");
+        assert_eq!(p.hover_bg, "#F0E0B0");
+        assert_eq!(p.hover_fg, "#8A5A00");
     }
 
     #[test]

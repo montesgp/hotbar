@@ -137,7 +137,13 @@ export function applyTheme(palette: ThemePalette): void {
   root.style.setProperty("--ob-text-dim", palette.textDim);
   root.style.setProperty("--ob-hover-bg", palette.hoverBg);
   root.style.setProperty("--ob-hover-fg", palette.hoverFg);
-  root.style.setProperty("--ob-press-bg", palette.hoverFg);
+  // Pressed = the hover wash pulled toward the hover foreground. It must stay
+  // clearly different from the foreground itself, or the glyph disappears
+  // while the button is held.
+  root.style.setProperty(
+    "--ob-press-bg",
+    `color-mix(in srgb, ${palette.hoverBg} 78%, ${palette.hoverFg})`,
+  );
   root.style.setProperty("--ob-radius-cell", `${palette.radiusCell}px`);
   root.style.setProperty("--ob-radius-handle", `${palette.radiusHandle}px`);
   root.style.setProperty("--ob-tab-radius", `${palette.tabRadius}px`);
@@ -563,14 +569,42 @@ async function openContextMenu(
   actions: (ContextMenuAction | "separator")[],
   onSelect: () => void,
 ): Promise<void> {
-  if (!contextMenuEl) return;
-  await closePanel();
-  setMenuOpen(true);
-  renderContextMenu(contextMenuEl, actions, onSelect);
-  await applyState(cfg, false, true);
-  const size = sizeFor(cfg.collapsed, false, true);
-  positionContextMenu(contextMenuEl, clickY, size.height);
-  contextMenuEl.hidden = false;
+  const menu = contextMenuEl;
+  if (!menu) return;
+  await withMaskedResize(async () => {
+    await closePanel();
+    setMenuOpen(true);
+    renderContextMenu(menu, actions, onSelect);
+    await applyState(cfg, false, true);
+    const size = sizeFor(cfg.collapsed, false, true);
+    positionContextMenu(menu, clickY, size.height);
+    menu.hidden = false;
+  });
+}
+
+/** Resolves after the browser has painted twice, so a state change made
+ * before it is on screen before whatever follows. */
+function afterPaint(): Promise<void> {
+  return new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+}
+
+/**
+ * Runs a window resize with the page painted invisible (`body.resizing`, see
+ * styles.css) and reveals it only once the new size, position and menu state
+ * are settled. `applyState` resizes and repositions with separate native
+ * calls, so without the mask each intermediate window (resized but not yet
+ * moved, with newly exposed transparent area) is composited to the screen.
+ */
+async function withMaskedResize(change: () => Promise<void>): Promise<void> {
+  document.body.classList.add("resizing");
+  try {
+    await change();
+    await afterPaint();
+  } finally {
+    document.body.classList.remove("resizing");
+  }
 }
 
 /** Closes the menu and restores the window to its plain collapsed/expanded
@@ -578,7 +612,7 @@ async function openContextMenu(
 async function closeContextMenu(cfg: OrbitbarConfig, setMenuOpen: (open: boolean) => void): Promise<void> {
   setMenuOpen(false);
   if (contextMenuEl) contextMenuEl.hidden = true;
-  await applyState(cfg, false, false);
+  await withMaskedResize(() => applyState(cfg, false, false));
 }
 
 /** Persist the current config object back to disk. */
@@ -853,6 +887,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (!menuOpen || !contextMenuEl) return;
       const target = ev.target as HTMLElement;
       if (contextMenuEl.contains(target)) return;
+      // The settings cell toggles the menu in its own click handler; closing
+      // here first would make that click see a closed menu and reopen it.
+      if (target.closest('.cell[data-action="edit-config"]')) return;
       void closeContextMenu(cfg, setMenuOpen);
     });
 
@@ -887,6 +924,10 @@ window.addEventListener("DOMContentLoaded", async () => {
         // lives) instead of acting directly. It never becomes the panel's
         // active action: the menu closes any open panel first.
         if (action === "edit-config") {
+          if (menuOpen) {
+            await closeContextMenu(cfg, setMenuOpen);
+            return;
+          }
           await showContextMenu((ev as MouseEvent).clientY);
           return;
         }

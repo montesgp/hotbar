@@ -170,6 +170,19 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   live. Route: delegated writer (config.rs, main.ts, styles.css, docs). Check: cargo test (RED
   first), clippy, tsc, build.
 
+- [ ] **O13 — Bar interaction polish** (user, 2026-09-29): (a) pressing a cell no longer
+  hides its glyph (`:active` painted bg = hoverFg); (b) no flash when the menu opens; (c) clicking
+  the settings cell again closes the menu when open (toggle), opens it when closed; (d) light
+  theme hover background a bit stronger amber (slightly, not much). Route: delegated writer.
+  Check: cargo test, clippy, tsc, build; visual check by the user.
+- [ ] **O14 — Documentation fully aligned to the product** (user, 2026-09-29): README, app/README,
+  docs/architecture.md, CONTRIBUTING, extensions/README. Name orbitbar everywhere; cross-platform
+  (Windows, macOS, Linux) with install and usage shown per OS; core = bar with agent token
+  metrics overall and per project; Herdr and OmniRoute are optional extensions, off by default,
+  documented only in an Extensions section; say what the product is, never what it is not; no
+  personal/org names (generic examples); requirements accurate (SQLite is bundled, no system
+  dependency). Route: delegated writer. Check: grep for stale terms, link check by readback.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
