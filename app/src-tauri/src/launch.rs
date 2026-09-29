@@ -69,15 +69,27 @@ pub fn parse_command_line(input: &str) -> Result<CommandLine, String> {
 /// backend loads itself, so the IPC command cannot be used to run an arbitrary
 /// string.
 pub fn command_for_item(items: &[Item], id: &str) -> Result<CommandLine, String> {
+    command_for_item_with_prefix(items, id, "run:")
+}
+
+fn command_for_item_with_prefix(items: &[Item], id: &str, prefix: &str) -> Result<CommandLine, String> {
     let item = items
         .iter()
         .find(|item| item.id == id)
         .ok_or_else(|| format!("no item with id \"{id}\""))?;
     let command = item
         .action
-        .strip_prefix("run:")
-        .ok_or_else(|| format!("item \"{id}\" is not a run: action"))?;
+        .strip_prefix(prefix)
+        .ok_or_else(|| format!("item \"{id}\" is not a {prefix} action"))?;
     parse_command_line(command)
+}
+
+/// Resolves a cell's `panel:` action, with exactly the parsing and validation
+/// of `run:` (same quoting rules, no shell, id looked up in the backend's own
+/// config). The two prefixes never cross: a `run:` item is refused here and a
+/// `panel:` item is refused by `command_for_item`.
+pub fn panel_command_for_item(items: &[Item], id: &str) -> Result<CommandLine, String> {
+    command_for_item_with_prefix(items, id, "panel:")
 }
 
 /// PATHEXT fallback when the variable is unset.
@@ -110,6 +122,26 @@ pub fn resolve_program(program: &str, path: Option<&OsStr>, pathext: Option<&OsS
         .find(|candidate| candidate.is_file())
 }
 
+/// The program to execute for `line`: on Windows a bare name is resolved
+/// through `PATH` and `PATHEXT` (see `resolve_program`), anything else is used
+/// as written. Shared by `run:` and `panel:` so both find the same program.
+pub fn resolved_program(line: &CommandLine) -> std::ffi::OsString {
+    #[cfg(windows)]
+    {
+        resolve_program(
+            &line.program,
+            std::env::var_os("PATH").as_deref(),
+            std::env::var_os("PATHEXT").as_deref(),
+        )
+        .map(PathBuf::into_os_string)
+        .unwrap_or_else(|| line.program.clone().into())
+    }
+    #[cfg(not(windows))]
+    {
+        line.program.clone().into()
+    }
+}
+
 /// Spawns `line` detached from the app: nothing is waited on, and stdio is
 /// disconnected so the child never blocks on the app's (absent) console.
 ///
@@ -120,18 +152,7 @@ pub fn resolve_program(program: &str, path: Option<&OsStr>, pathext: Option<&OsS
 /// all. `CREATE_NO_WINDOW` would hide the console of a program the user
 /// launched to see.
 pub fn spawn(line: &CommandLine) -> Result<(), String> {
-    #[cfg(windows)]
-    let program: std::ffi::OsString = resolve_program(
-        &line.program,
-        std::env::var_os("PATH").as_deref(),
-        std::env::var_os("PATHEXT").as_deref(),
-    )
-    .map(PathBuf::into_os_string)
-    .unwrap_or_else(|| line.program.clone().into());
-    #[cfg(not(windows))]
-    let program = &line.program;
-
-    let mut command = Command::new(program);
+    let mut command = Command::new(resolved_program(line));
     command
         .args(&line.args)
         .stdin(Stdio::null())
@@ -271,6 +292,30 @@ mod tests {
             let err = command_for_item(&[item("a", action)], "a").unwrap_err();
             assert!(err.contains("run:"), "{action:?}: {err}");
         }
+    }
+
+    #[test]
+    fn a_panel_item_resolves_like_a_run_item() {
+        let items = [item("status", r#"panel:powershell -NoProfile -File "C:\My Tools\status.ps1" -Once"#)];
+        let l = panel_command_for_item(&items, "status").unwrap();
+        assert_eq!(l.program, "powershell");
+        assert_eq!(l.args, args(&["-NoProfile", "-File", r"C:\My Tools\status.ps1", "-Once"]));
+    }
+
+    #[test]
+    fn panel_and_run_prefixes_never_cross() {
+        let items = [item("r", "run:notepad"), item("p", "panel:notepad")];
+        let err = panel_command_for_item(&items, "r").unwrap_err();
+        assert!(err.contains("panel:"), "{err}");
+        let err = command_for_item(&items, "p").unwrap_err();
+        assert!(err.contains("run:"), "{err}");
+    }
+
+    #[test]
+    fn a_panel_item_needs_a_known_id_and_a_program() {
+        assert!(panel_command_for_item(&[item("p", "panel:x")], "other").is_err());
+        assert!(panel_command_for_item(&[item("p", "panel:   ")], "p").is_err());
+        assert!(panel_command_for_item(&[item("p", "agent-usage")], "p").is_err());
     }
 
     #[test]

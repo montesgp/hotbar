@@ -30,7 +30,21 @@ pub struct AppConfig {
     /// Whether items flagged `example` are shown. Off by default: examples
     /// only demonstrate what a cell can do, they are not part of the user's bar.
     pub show_examples: bool,
+    /// Where the bar was last dropped: its top-left in physical screen pixels
+    /// (negative on a monitor left of or above the primary). Absent until the
+    /// bar is first moved, and ignored when it no longer lies on any monitor;
+    /// the bar then goes right-center of `monitor` with `margin`, as before.
+    /// Omitted from config.json while unset, so an untouched file stays clean.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<Position>,
     pub items: Vec<Item>,
+}
+
+/// A point in physical screen pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Position {
+    pub x: i32,
+    pub y: i32,
 }
 
 impl Default for AppConfig {
@@ -43,6 +57,7 @@ impl Default for AppConfig {
             font_size: 10.0,
             auto_start: true,
             show_examples: false,
+            position: None,
             items: default_items(),
         }
     }
@@ -277,7 +292,7 @@ pub fn ensure_pricing_file(path: &PathBuf) -> Result<(), String> {
 }
 
 fn default_items() -> Vec<Item> {
-    let tooltip = "none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | open:<url> | run:<program> [args] | edit-config";
+    let tooltip = "none | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | open:<url> | run:<program> [args] | panel:<program> [args] | edit-config";
     vec![
         Item {
             id: "claude".into(),
@@ -583,6 +598,28 @@ mod tests {
     fn an_explicit_show_examples_true_is_preserved() {
         let cfg: AppConfig = serde_json::from_str(r#"{"showExamples":true}"#).unwrap();
         assert!(cfg.show_examples);
+    }
+
+    /// Old configs have no saved position; that means "place it right-center".
+    #[test]
+    fn a_config_without_position_loads_with_none_and_writes_none_back() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"theme":"dark","monitor":"primary","margin":8}"#).unwrap();
+        assert_eq!(cfg.position, None);
+        assert_eq!(cfg.margin, 8, "monitor/margin keep working next to the new field");
+        assert!(!serde_json::to_string(&cfg).unwrap().contains("position"));
+        let null: AppConfig = serde_json::from_str(r#"{"position":null}"#).unwrap();
+        assert_eq!(null.position, None);
+    }
+
+    /// The dropped position survives a save and a reload.
+    #[test]
+    fn a_saved_position_round_trips_including_negative_coordinates() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"position":{"x":-1500,"y":120}}"#).unwrap();
+        assert_eq!(cfg.position, Some(Position { x: -1500, y: 120 }));
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains(r#""position":{"x":-1500,"y":120}"#), "{json}");
+        let again: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(again.position, cfg.position);
     }
 
     /// The GitHub cell is the shipped example, and it says so.

@@ -250,11 +250,78 @@ pub fn project_display_name(key: &str) -> String {
 /// (subagents, resumed sessions, several projects under one parent), so a
 /// shared cache means the filesystem is walked at most once per distinct
 /// cwd across all three readers, not once per session.
-pub type ProjectRootCache = HashMap<String, String>;
+pub struct ProjectRootCache {
+    policy: RootPolicy,
+    resolved: HashMap<String, Option<String>>,
+}
 
-/// Resolves the project root for a session `cwd`: the nearest ancestor
-/// directory (including `cwd` itself) that contains a `.git` entry. This is
-/// what turns `app`, `app/src-tauri` and `.claude/worktrees/agent-foo` -
+/// The two filesystem boundaries the resolver depends on. Injected (instead of
+/// read from the environment inside the walk) so tests are deterministic.
+#[derive(Debug, Clone, Default)]
+pub struct RootPolicy {
+    /// Directories whose contents are scratch work, not projects.
+    pub temp_dirs: Vec<PathBuf>,
+    /// The walk for a repository never climbs into or past this directory.
+    pub home: Option<PathBuf>,
+}
+
+impl RootPolicy {
+    /// The real machine: the OS temp dir and the user's home. The temp dir is
+    /// listed as the OS reports it and, when that differs, in its resolved
+    /// form too (Windows may report an 8.3 short name such as `PATRI~1` where
+    /// an agent recorded the long one; macOS reports `/var` for `/private/var`).
+    pub fn system() -> Self {
+        let mut temp_dirs = vec![std::env::temp_dir()];
+        if let Ok(resolved) = std::fs::canonicalize(&temp_dirs[0]) {
+            let text = resolved.to_string_lossy();
+            let resolved = PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text));
+            if resolved != temp_dirs[0] {
+                temp_dirs.push(resolved);
+            }
+        }
+        Self { temp_dirs, home: dirs::home_dir() }
+    }
+}
+
+impl ProjectRootCache {
+    pub fn new() -> Self {
+        Self::with_policy(RootPolicy::system())
+    }
+
+    pub fn with_policy(policy: RootPolicy) -> Self {
+        Self { policy, resolved: HashMap::new() }
+    }
+
+    /// Number of distinct cwds resolved so far (tests only).
+    #[cfg(test)]
+    fn cached_lookups(&self) -> usize {
+        self.resolved.len()
+    }
+}
+
+impl Default for ProjectRootCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Resolves the project root for a session `cwd`, or `None` when the session
+/// does not belong to any project and must not be counted at all (neither in
+/// a project row nor in the agent totals). In order:
+///
+/// 1. A cwd under the OS temp dir is scratch work (for example a review
+///    subprocess), excluded whether or not it still exists.
+/// 2. Otherwise the root is the nearest ancestor directory (including `cwd`
+///    itself, or its nearest surviving ancestor when `cwd` was deleted) that
+///    contains a `.git` entry; the walk never climbs into the home directory.
+/// 3. With no repository found: an existing `cwd` (the home directory, a plain
+///    folder) is excluded; a missing `cwd` belongs to a repository that was
+///    renamed or deleted, and is keyed by the topmost missing directory, the
+///    child of the deepest surviving ancestor, so every subfolder of the
+///    vanished repo shares one row. If no ancestor survives at all, the raw
+///    cwd is the key.
+///
+/// The repository walk is what turns `app`, `app/src-tauri` and `.claude/worktrees/agent-foo` -
 /// three different session cwds inside the same repository - into one
 /// per-project row instead of three.
 ///
@@ -263,33 +330,57 @@ pub type ProjectRootCache = HashMap<String, String>;
 /// MAIN repository root, not the worktree's own checkout, so a session run
 /// from a worktree rolls up into the same project as the primary checkout.
 ///
-/// Falls back to `cwd` itself (normalized) when no `.git` ancestor exists,
-/// or when `cwd` no longer exists on disk (a deleted checkout, or a session
-/// recorded on a different machine than the one reading it now).
-pub fn resolve_project_root(cwd: &str, cache: &mut ProjectRootCache) -> String {
-    if let Some(cached) = cache.get(cwd) {
+/// A session recorded on a different machine than the one reading it now has
+/// a missing cwd and falls under rule 3.
+pub fn resolve_project_root(cwd: &str, cache: &mut ProjectRootCache) -> Option<String> {
+    if let Some(cached) = cache.resolved.get(cwd) {
         return cached.clone();
     }
-    let resolved = resolve_project_root_uncached(cwd);
-    cache.insert(cwd.to_string(), resolved.clone());
+    let resolved = resolve_project_root_uncached(cwd, &cache.policy);
+    cache.resolved.insert(cwd.to_string(), resolved.clone());
     resolved
 }
 
-fn resolve_project_root_uncached(cwd: &str) -> String {
+/// True when `path` is `base` or lies below it, compared on normalized paths
+/// by whole components (`Temp-projects` is not under `Temp`) and without regard
+/// to letter case on Windows.
+fn is_within(path: &str, base: &Path) -> bool {
+    let base = normalize_project_path(&base.to_string_lossy());
+    if base.is_empty() {
+        return false;
+    }
+    let (path, base) = if cfg!(windows) {
+        (path.to_lowercase(), base.to_lowercase())
+    } else {
+        (path.to_string(), base)
+    };
+    path == base
+        || path
+            .strip_prefix(&base)
+            .is_some_and(|rest| rest.starts_with(std::path::MAIN_SEPARATOR))
+}
+
+fn resolve_project_root_uncached(cwd: &str, policy: &RootPolicy) -> Option<String> {
     let normalized_cwd = normalize_project_path(cwd);
     if normalized_cwd.is_empty() {
-        return normalized_cwd;
+        return Some(normalized_cwd);
+    }
+
+    if policy.temp_dirs.iter().any(|temp| is_within(&normalized_cwd, temp)) {
+        return None;
     }
 
     // A deleted cwd (a removed worktree, a deleted subfolder) starts the walk
     // from its nearest surviving ancestor, so it still rolls up into the repo
-    // that contained it. If no repo is found above it, the fallback below
-    // keeps the original path rather than the ancestor's.
+    // that contained it. `top_missing` remembers the highest directory that
+    // no longer exists, the key when no repo is found above it.
     let mut start = Path::new(&normalized_cwd);
+    let mut top_missing: Option<&Path> = None;
     while !start.exists() {
+        top_missing = Some(start);
         match start.parent() {
             Some(parent) => start = parent,
-            None => return normalized_cwd,
+            None => return Some(normalized_cwd),
         }
     }
 
@@ -298,7 +389,7 @@ fn resolve_project_root_uncached(cwd: &str) -> String {
     // session cwd that has no repo of its own would silently merge into one
     // giant project named after the home folder instead of falling back to
     // its own path.
-    let home_boundary = dirs::home_dir();
+    let home_boundary = policy.home.clone();
 
     let mut current = start;
     loop {
@@ -308,22 +399,22 @@ fn resolve_project_root_uncached(cwd: &str) -> String {
         let git_path = current.join(".git");
         if git_path.is_file() {
             if let Some(main_root) = main_root_from_gitdir_file(&git_path) {
-                return normalize_project_path(&main_root.to_string_lossy());
+                return Some(normalize_project_path(&main_root.to_string_lossy()));
             }
             // Unreadable or malformed gitdir pointer: this directory is
             // still the most honest root we have, rather than failing the
             // whole lookup.
-            return normalize_project_path(&current.to_string_lossy());
+            return Some(normalize_project_path(&current.to_string_lossy()));
         }
         if git_path.is_dir() {
-            return normalize_project_path(&current.to_string_lossy());
+            return Some(normalize_project_path(&current.to_string_lossy()));
         }
         match current.parent() {
             Some(parent) => current = parent,
             None => break,
         }
     }
-    normalized_cwd
+    top_missing.map(|missing| normalize_project_path(&missing.to_string_lossy()))
 }
 
 /// Reads a git worktree's `.git` FILE (`gitdir: <main>/.git/worktrees/<name>`)
@@ -533,9 +624,9 @@ mod tests {
         let nested = dir.path().join("app").join("src-tauri");
         std::fs::create_dir_all(&nested).unwrap();
 
-        let mut cache = ProjectRootCache::new();
+        let mut cache = ProjectRootCache::with_policy(RootPolicy::default());
         let root = resolve_project_root(&nested.to_string_lossy(), &mut cache);
-        assert_eq!(root, normalize_project_path(&dir.path().to_string_lossy()));
+        assert_eq!(root, Some(normalize_project_path(&dir.path().to_string_lossy())));
     }
 
     #[test]
@@ -553,28 +644,55 @@ mod tests {
         )
         .unwrap();
 
-        let mut cache = ProjectRootCache::new();
+        let mut cache = ProjectRootCache::with_policy(RootPolicy::default());
         let root = resolve_project_root(&worktree.to_string_lossy(), &mut cache);
-        assert_eq!(root, normalize_project_path(&main.to_string_lossy()));
+        assert_eq!(root, Some(normalize_project_path(&main.to_string_lossy())));
     }
 
+    /// A resolver whose walk stops at `home` and that treats `temp` as scratch,
+    /// so no test depends on the machine's real home or temp directory.
+    fn policy(home: &Path, temp: &[&Path]) -> RootPolicy {
+        RootPolicy {
+            temp_dirs: temp.iter().map(|t| t.to_path_buf()).collect(),
+            home: Some(home.to_path_buf()),
+        }
+    }
+
+    fn resolve(cwd: &Path, policy: RootPolicy) -> Option<String> {
+        resolve_project_root(&cwd.to_string_lossy(), &mut ProjectRootCache::with_policy(policy))
+    }
+
+    fn key(path: &Path) -> Option<String> {
+        Some(normalize_project_path(&path.to_string_lossy()))
+    }
+
+    /// An existing folder with no repository above it (up to the home
+    /// boundary) is not a project: it is excluded, not keyed by its own path.
     #[test]
-    fn resolve_project_root_falls_back_to_cwd_when_no_git_ancestor_exists() {
+    fn an_existing_folder_outside_any_repository_is_excluded() {
         let dir = tempdir().unwrap();
         let nested = dir.path().join("no-repo-here");
         std::fs::create_dir_all(&nested).unwrap();
 
-        let mut cache = ProjectRootCache::new();
-        let root = resolve_project_root(&nested.to_string_lossy(), &mut cache);
-        assert_eq!(root, normalize_project_path(&nested.to_string_lossy()));
+        assert_eq!(resolve(&nested, policy(dir.path(), &[])), None);
+    }
+
+    /// The home directory itself (and anything that only reaches it) is not a
+    /// project, even when the home holds a bare dotfiles repo.
+    #[test]
+    fn the_home_directory_itself_is_excluded() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+
+        assert_eq!(resolve(dir.path(), policy(dir.path(), &[])), None);
     }
 
     #[test]
     fn resolve_project_root_falls_back_to_cwd_when_the_path_is_missing() {
         let missing = "Z:\\this\\path\\does\\not\\exist\\on\\this\\machine";
-        let mut cache = ProjectRootCache::new();
+        let mut cache = ProjectRootCache::with_policy(RootPolicy::default());
         let root = resolve_project_root(missing, &mut cache);
-        assert_eq!(root, normalize_project_path(missing));
+        assert_eq!(root, Some(normalize_project_path(missing)));
     }
 
     /// A removed worktree or deleted subfolder of a repo that still exists
@@ -585,20 +703,78 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(".git")).unwrap();
         let deleted = dir.path().join(".claude").join("worktrees").join("agent-gone");
 
-        let mut cache = ProjectRootCache::new();
-        let root = resolve_project_root(&deleted.to_string_lossy(), &mut cache);
-        assert_eq!(root, normalize_project_path(&dir.path().to_string_lossy()));
+        assert_eq!(resolve(&deleted, RootPolicy::default()), key(dir.path()));
     }
 
-    /// A deleted folder with no repo above it keeps its own path.
+    /// A deleted folder with no repo above it is keyed by its own path.
     #[test]
     fn resolve_project_root_keeps_a_deleted_folder_outside_any_repo() {
         let dir = tempdir().unwrap();
         let deleted = dir.path().join("gone-project");
 
-        let mut cache = ProjectRootCache::new();
-        let root = resolve_project_root(&deleted.to_string_lossy(), &mut cache);
-        assert_eq!(root, normalize_project_path(&deleted.to_string_lossy()));
+        assert_eq!(resolve(&deleted, policy(dir.path(), &[])), key(&deleted));
+    }
+
+    /// A repo that was renamed or deleted leaves session cwds in its
+    /// subfolders. They all belong to the repo root, the topmost directory
+    /// that no longer exists (the child of the deepest surviving ancestor).
+    #[test]
+    fn deleted_subfolders_of_a_vanished_repo_share_its_topmost_missing_root() {
+        let dir = tempdir().unwrap();
+        let gone = dir.path().join("herdr-omniroute");
+        let p = || policy(dir.path(), &[]);
+
+        for sub in [
+            gone.clone(),
+            gone.join("app"),
+            gone.join("app").join("src-tauri").join("target"),
+            gone.join(".claude").join("worktrees").join("agent-x"),
+            gone.join("hotbar-tauri").join("src-tauri"),
+        ] {
+            assert_eq!(resolve(&sub, p()), key(&gone), "{}", sub.display());
+        }
+    }
+
+    /// A cwd under the OS temp dir is scratch work (for example a review
+    /// subprocess run): excluded whether or not it still exists, and even when
+    /// it holds a repository.
+    #[test]
+    fn a_cwd_under_the_temp_dir_is_excluded_whether_or_not_it_exists() {
+        let dir = tempdir().unwrap();
+        let temp = dir.path().join("Temp");
+        let alive = temp.join("run-1");
+        std::fs::create_dir_all(alive.join(".git")).unwrap();
+        let p = || policy(dir.path(), &[&temp]);
+
+        assert_eq!(resolve(&alive, p()), None, "existing, with a repo");
+        assert_eq!(resolve(&temp.join("run-2"), p()), None, "deleted");
+        assert_eq!(resolve(&temp.join("run-2").join("deep"), p()), None, "deleted, nested");
+        assert_eq!(resolve(&temp, p()), None, "the temp dir itself");
+    }
+
+    /// The temp check is by whole path components, never a string prefix.
+    #[test]
+    fn a_sibling_that_only_shares_the_temp_prefix_is_not_excluded() {
+        let dir = tempdir().unwrap();
+        let temp = dir.path().join("Temp");
+        let sibling = dir.path().join("Temp-projects").join("app");
+
+        assert_eq!(
+            resolve(&sibling, policy(dir.path(), &[&temp])),
+            key(&dir.path().join("Temp-projects"))
+        );
+    }
+
+    /// Windows paths are case-insensitive: the agent may record the temp dir
+    /// with different letter case (or the long name where the OS reports 8.3).
+    #[cfg(windows)]
+    #[test]
+    fn the_temp_check_ignores_case_on_windows() {
+        let dir = tempdir().unwrap();
+        let temp = dir.path().join("Temp");
+        let cwd = dir.path().join("TEMP").join("gentle-ai-codex-reviewer-123");
+
+        assert_eq!(resolve(&cwd, policy(dir.path(), &[&temp])), None);
     }
 
     #[test]
@@ -606,17 +782,28 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".git")).unwrap();
 
-        let mut cache = ProjectRootCache::new();
+        let mut cache = ProjectRootCache::with_policy(RootPolicy::default());
         let cwd = dir.path().to_string_lossy().to_string();
         let first = resolve_project_root(&cwd, &mut cache);
         // Remove the .git marker: if the second call still hit the
-        // filesystem it would now fall back to cwd itself instead of the
-        // cached root, so this proves the cache - not a repeated walk - is
+        // filesystem it would now resolve differently instead of returning
+        // the cached root, so this proves the cache - not a repeated walk - is
         // what the second call actually used.
         std::fs::remove_dir_all(dir.path().join(".git")).unwrap();
         let second = resolve_project_root(&cwd, &mut cache);
         assert_eq!(first, second);
-        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.cached_lookups(), 1);
+    }
+
+    /// An exclusion is cached too: it costs a filesystem walk like any other.
+    #[test]
+    fn an_exclusion_is_cached_like_a_root() {
+        let dir = tempdir().unwrap();
+        let mut cache = ProjectRootCache::with_policy(policy(dir.path(), &[dir.path()]));
+        let cwd = dir.path().join("x").to_string_lossy().to_string();
+        assert_eq!(resolve_project_root(&cwd, &mut cache), None);
+        assert_eq!(resolve_project_root(&cwd, &mut cache), None);
+        assert_eq!(cache.cached_lookups(), 1);
     }
 
     /// Not a unit test: prints the real home directory's ThisMonth snapshot

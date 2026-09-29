@@ -1,10 +1,12 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod config;
 mod launch;
+mod panel;
+mod placement;
 mod usage;
 
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{Manager, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt;
 
 /// Physical window sizes for the two visual states (must match src/main.ts).
@@ -87,6 +89,20 @@ fn run_command(app: tauri::AppHandle, id: String) -> Result<(), String> {
     launch::spawn(&launch::command_for_item(&cfg.items, &id)?)
 }
 
+/// Runs a cell's `panel:<program> [args]` action and returns what it printed,
+/// for the panel to show. Like `run_command`, the frontend sends only the item
+/// id and the command line comes from the config loaded here, so this cannot
+/// run an arbitrary string. It runs off the main thread, with no console
+/// window, a closed stdin, a size cap and a hard timeout: see `panel`.
+#[tauri::command]
+async fn run_panel_command(app: tauri::AppHandle, id: String) -> Result<panel::PanelOutput, String> {
+    let cfg = config::load(&app)?;
+    let line = launch::panel_command_for_item(&cfg.items, &id)?;
+    tauri::async_runtime::spawn_blocking(move || panel::run_captured(&line, panel::TIMEOUT, panel::MAX_OUTPUT_BYTES))
+        .await
+        .map_err(|e| format!("panel command task panicked: {e}"))?
+}
+
 /// Exits the whole process, called by the context menu's "Quit Orbitbar".
 /// `app.exit(0)` tears the app down through Tauri's own shutdown path
 /// (closes every window, runs `on_exit` if one is ever added); a bare
@@ -124,101 +140,138 @@ fn resolve_monitor(
     Ok(window.current_monitor()?.unwrap_or(monitors[0].clone()))
 }
 
-/// Top-left of a window of `size` snapped to the right edge of a monitor,
-/// vertically centered, `margin` physical pixels in from the edge. Pure so the
-/// snap rule is testable; `monitor` is `(x, y, width, height)`.
-fn right_center_origin(monitor: (i32, i32, u32, u32), size: (u32, u32), margin: i32) -> (i32, i32) {
-    let (mx, my, mw, mh) = monitor;
-    let x = mx + (mw as i32 - size.0 as i32) - margin;
-    let y = my + (mh as i32 - size.1 as i32) / 2;
-    (x, y)
-}
-
-/// Monitor rectangle and window size (all physical pixels) for `snap_window`.
+/// What `place_window` is asked to lay out, all in physical pixels.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SnapTarget {
-    monitor_x: i32,
-    monitor_y: i32,
-    monitor_width: u32,
-    monitor_height: u32,
-    width: u32,
-    height: u32,
-    margin: i32,
+struct PlaceTarget {
+    /// The bar as it is now (screen rectangle, without any menu or panel).
+    bar: placement::Rect,
+    /// The size the bar should have: the current one, or the other state's
+    /// when collapsing or expanding.
+    bar_width: u32,
+    bar_height: u32,
+    /// Room the context menu or usage panel needs beside the bar. The height
+    /// is a minimum: the window is never shorter than the bar.
+    extra_width: u32,
+    extra_height: u32,
 }
 
-/// Snaps the window to the right-center of the given monitor at `size`,
-/// applying position AND size in one native operation.
+/// The placement plus the name of the monitor the bar is on, so the frontend
+/// can persist both after a drag.
+#[derive(Serialize)]
+struct PlaceResult {
+    #[serde(flatten)]
+    placement: placement::Placement,
+    monitor: Option<String>,
+}
+
+/// Work area of a monitor. The work area is the monitor minus the taskbar and
+/// other docked toolbars, so nothing is placed under them.
+fn work_rect(monitor: &tauri::Monitor) -> placement::Rect {
+    let area = monitor.work_area();
+    placement::Rect::new(area.position.x, area.position.y, area.size.width, area.size.height)
+}
+
+/// Lays the window out for the bar plus whatever is open beside it, applying
+/// position AND size in one native operation, and returns where everything
+/// went (see `placement::place`).
+///
+/// The bar never moves on screen: the window grows toward the side of the bar
+/// that has room and the frontend draws the menu/panel there. A bar that is
+/// outside its monitor is clamped in, so the same call also settles a drag.
 ///
 /// Doing it as separate `set_size` / `set_position` calls lets the compositor
-/// show the in-between frame (new size at the old position), which for a
-/// right-anchored bar is a visible jump. On Windows this is one `SetWindowPos`;
-/// elsewhere it is `set_size` then `set_position`, the best the platform API
-/// offers.
-/// The window is `resizable: false`, which makes tao lock its min/max size to
-/// the size at that moment and clamp anything else, so `resizable` is toggled
-/// around the call to release and re-take that lock at the new size (a sync
-/// command runs on the main thread, so the three steps are strictly ordered).
-/// `SWP_NOCOPYBITS` is left off on purpose: the webview is a child surface
-/// composed by DWM, so nothing stale is blitted, and discarding the client
-/// bits could itself produce a blank frame.
+/// show the in-between frame (new size at the old position), which is a visible
+/// jump. On Windows this is one `SetWindowPos`; elsewhere it is `set_size` then
+/// `set_position`, the best the platform API offers. See `set_bounds` for how
+/// each platform deals with the window being `resizable: false`.
 #[tauri::command]
-fn snap_window(window: WebviewWindow, target: SnapTarget) -> Result<(), String> {
-    let (x, y) = right_center_origin(
-        (target.monitor_x, target.monitor_y, target.monitor_width, target.monitor_height),
-        (target.width, target.height),
-        target.margin,
-    );
-    set_bounds(&window, x, y, target.width, target.height).map_err(|e| e.to_string())
+fn place_window(window: WebviewWindow, target: PlaceTarget) -> Result<PlaceResult, String> {
+    let result = compute_placement(&window, &target)?;
+    let w = result.placement.window;
+    set_bounds(&window, w.x, w.y, w.width, w.height).map_err(|e| e.to_string())?;
+    Ok(result)
 }
 
+/// The same answer as `place_window` without touching the window. The
+/// frontend asks first so it can put the menu/panel on the right side of the
+/// bar BEFORE the window grows: growing to the right of a bar the page still
+/// draws at the far right would show it jumping for a frame.
+#[tauri::command]
+fn plan_window(window: WebviewWindow, target: PlaceTarget) -> Result<PlaceResult, String> {
+    compute_placement(&window, &target)
+}
+
+/// Picks the monitor the bar is on and runs the pure placement on its work
+/// area.
+fn compute_placement(window: &WebviewWindow, target: &PlaceTarget) -> Result<PlaceResult, String> {
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    if monitors.is_empty() {
+        return Err("no monitor is available".to_string());
+    }
+    let areas: Vec<placement::Rect> = monitors.iter().map(work_rect).collect();
+    // A bar that overlaps no monitor (one was unplugged) goes to the primary.
+    let primary = window
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .and_then(|p| monitors.iter().position(|m| m.position() == p.position()))
+        .unwrap_or(0);
+    let index = placement::pick_area(target.bar, &areas).unwrap_or(primary);
+
+    let placed = placement::place(
+        target.bar,
+        (target.bar_width, target.bar_height),
+        (target.extra_width, target.extra_height),
+        areas[index],
+    );
+    Ok(PlaceResult { placement: placed, monitor: monitors[index].name().cloned() })
+}
+
+/// Applies position and size to the window in one native call on Windows.
+///
+/// The window is `resizable: false`. On Windows that only means the frame has
+/// no `WS_SIZEBOX` (no resize borders); tao does not clamp programmatic sizes
+/// (`WM_WINDOWPOSCHANGING` passes them through and the min/max constraints
+/// only affect user-driven resizing), so `SetWindowPos` may resize the window
+/// as it is. Toggling `resizable` around the call used to be done here, but in
+/// tao that rewrites the window style (`SetWindowLongW`), forces
+/// `SWP_FRAMECHANGED` (a full non-client recalculation and repaint) and
+/// attaches/detaches tauri's undecorated-resize hook, twice per placement:
+/// the frame flash seen when picking a menu entry.
 #[cfg(windows)]
 fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> tauri::Result<()> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
 
     let hwnd = window.hwnd()?;
-    window.set_resizable(true)?;
     // SAFETY: `hwnd` is the live handle of this window; the call has no
-    // pointer arguments beyond the handle itself.
+    // pointer arguments beyond the handle itself. `SWP_NOCOPYBITS` is left
+    // off on purpose: the webview is a child surface composed by DWM, so
+    // nothing stale is blitted, and discarding the client bits could itself
+    // produce a blank frame.
     let ok = unsafe {
         SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, width as i32, height as i32, SWP_NOZORDER | SWP_NOACTIVATE)
     };
-    let relock = window.set_resizable(false);
     if ok == 0 {
         return Err(std::io::Error::last_os_error().into());
     }
-    relock
+    Ok(())
 }
 
 #[cfg(not(windows))]
 fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> tauri::Result<()> {
-    // Same lock as on Windows: the window is `resizable: false`, so the
-    // toolkit may clamp min/max size to the current size. Release it around the
-    // change and take it again at the new size. There is no single native call
-    // here, so size and position stay two steps.
+    use tauri::{PhysicalPosition, PhysicalSize};
+
+    // Unlike Windows, the toolkit here may pin min/max size to the current size
+    // while the window is `resizable: false` (GTK size hints), so release the
+    // lock around the change and take it again at the new size. There is no
+    // single native call here, so size and position stay two steps. Not
+    // verified on these platforms; the Windows path above does not need it.
     window.set_resizable(true)?;
     let moved = window
         .set_size(PhysicalSize::new(width, height))
         .and_then(|()| window.set_position(PhysicalPosition::new(x, y)));
     let relock = window.set_resizable(false);
     moved.and(relock)
-}
-
-/// Position a window right-center of a monitor with the config margin.
-fn position_right_center(
-    window: &WebviewWindow,
-    monitor: &tauri::Monitor,
-    margin: i32,
-    size: PhysicalSize<u32>,
-) -> tauri::Result<()> {
-    let m_pos = monitor.position();
-    let m_size = monitor.size();
-    let (x, y) = right_center_origin(
-        (m_pos.x, m_pos.y, m_size.width, m_size.height),
-        (size.width, size.height),
-        margin,
-    );
-    window.set_position(PhysicalPosition::new(x, y))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -268,7 +321,21 @@ fn sync_autostart(app: &tauri::AppHandle, cfg: &config::AppConfig) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Registered first, as the plugin requires: a second launch exits at once
+    // and this callback runs in the instance that is already running, which
+    // brings its bar forward instead of leaving two bars on screen.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -280,23 +347,22 @@ pub fn run() {
             let cfg = config::load(app.handle())?;
             sync_autostart(app.handle(), &cfg);
 
-            // Start in the persisted state: collapsed is a small chevron bar,
-            // expanded is the full launcher; both sit right-center on the
-            // persisted monitor with the persisted margin.
-            let size = if cfg.collapsed {
-                PhysicalSize::new(SIZE_COLLAPSED.0, SIZE_COLLAPSED.1)
-            } else {
-                PhysicalSize::new(SIZE_EXPANDED.0, SIZE_EXPANDED.1)
-            };
-            // Always force the size, not just when collapsed. Windows was
-            // handing back a 136x400 window (the webview's min-content width
-            // plus a frame), which pushed 56px off the right edge of a 1080
-            // monitor and made position_right_center aim at an edge that was
-            // not there. Setting it unconditionally keeps the two in sync.
-            window.set_size(size)?;
-
-            let monitor = resolve_monitor(&window, &cfg.monitor)?;
-            position_right_center(&window, &monitor, cfg.margin, size)?;
+            // Start in the persisted state: collapsed is a small chevron tab,
+            // expanded is the full launcher. The bar goes where it was last
+            // dropped; with no saved position, or one that is off every
+            // monitor, it goes right-center of the configured monitor with the
+            // configured margin, as on a first launch.
+            //
+            // The size is forced together with the position, never left to the
+            // window as created: Windows was handing back a 136x400 window
+            // (the webview's min-content width plus a frame), which pushed 56px
+            // off the right edge of a 1080 monitor and made the right-center
+            // placement aim at an edge that was not there.
+            let size = if cfg.collapsed { SIZE_COLLAPSED } else { SIZE_EXPANDED };
+            let areas: Vec<placement::Rect> = window.available_monitors()?.iter().map(work_rect).collect();
+            let fallback = work_rect(&resolve_monitor(&window, &cfg.monitor)?);
+            let bar = placement::restore_bar(cfg.position.map(|p| (p.x, p.y)), size, &areas, fallback, cfg.margin);
+            set_bounds(&window, bar.x, bar.y, bar.width, bar.height)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -307,7 +373,9 @@ pub fn run() {
             get_config_path,
             ensure_pricing_file,
             run_command,
-            snap_window
+            run_panel_command,
+            place_window,
+            plan_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -350,20 +418,7 @@ mod autostart_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{right_center_origin, SIZE_COLLAPSED, SIZE_EXPANDED};
-
-    /// The bar hugs the right edge (margin in) and is centered vertically.
-    #[test]
-    fn snaps_to_the_right_edge_centered_vertically() {
-        assert_eq!(right_center_origin((0, 0, 1920, 1080), (72, 400), 12), (1836, 340));
-    }
-
-    /// A secondary monitor's origin (here left of and above the primary, so
-    /// negative) is honored on both axes.
-    #[test]
-    fn honors_the_monitor_origin() {
-        assert_eq!(right_center_origin((-1920, -200, 1920, 1080), (72, 400), 12), (-84, 140));
-    }
+    use super::{SIZE_COLLAPSED, SIZE_EXPANDED};
 
     /// The crescent radii src/main.ts writes into `--ob-moon-rx` / `--ob-moon-ry`.
     fn moon_radii() -> (u32, u32) {
