@@ -155,6 +155,21 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 - [ ] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar` (after the folder
       rename; verify the supported mechanism first).
 
+- [ ] **O10 — Settings cell left-click opens the menu** (user, 2026-09-29): left click on the
+  settings (`edit-config`) cell opens the same menu right-click opens today (Edit config,
+  Open pricing, Reload config, Quit...); "Edit config" stays reachable from that menu.
+  Route: delegated writer (main.ts + docs). Check: tsc, build, manual click.
+- [x] **O11 — Usage panel always opens on Today** (user, 2026-09-29: faster first view). The
+  window selector changes the window only while the panel is open; `usageWindow` is no longer
+  persisted/honored. Route: delegated writer (config.rs, usage/mod.rs, main.ts). Check:
+  cargo test (RED first on the default), tsc.
+- [ ] **O12 — Themes: only `light` and `dark`** (user, 2026-09-29). `dark` = former `classic`
+  palette; new `light` palette with the SAME half-moon shape (only colors change); the flat
+  `dark` and the name `classic` are removed; a stored `"classic"` (or any unknown) resolves to
+  `dark`; default `dark`. Settings menu gets a Light / Dark choice that persists and applies
+  live. Route: delegated writer (config.rs, main.ts, styles.css, docs). Check: cargo test (RED
+  first), clippy, tsc, build.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
@@ -302,6 +317,14 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   the click, or WebView2 does not register the hit-test; the window resize after a menu
   open/close is also asynchronous and needs ~1-2s before `GetWindowRect` reflects it, not the
   ~700ms that was tried first.
+- 2026-09-29: O11 done, commit `9f58a02`. `usageWindow` removed from `AppConfig` (serde ignores
+  unknown keys, so old config.json files still load: test `a_legacy_usage_window_key_is_ignored_on_load`);
+  `TimeWindow` default is `Today`; the selector is a session-only variable in main.ts, reset to
+  Today when the panel opens from closed (switching agents while open keeps the selection).
+  RED: `usage::tests::default_window_is_today` (left ThisMonth != Today) and
+  `config::tests::usage_window_is_not_persisted` (key present in serialized config) → GREEN.
+  Checks: `cargo test` 79/79 (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean,
+  `npm run build` OK. Not visually inspected.
 
 ## Next step
 
