@@ -333,6 +333,12 @@ body.moon .bar {
   }
 }
 
+/* Set as soon as an entry is picked, while the card fades out: the entries
+ * must not take a second click. */
+.context-menu.chosen {
+  pointer-events: none;
+}
+
 .context-menu[hidden] {
   display: none;
 }

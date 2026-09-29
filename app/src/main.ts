@@ -346,8 +346,9 @@ function buildContextMenuActions(
   ];
 }
 
-/** Paints the menu card. `onSelect` is awaited before the action runs, so the
- * menu is always fully closed (faded out, window resized back down unless the
+/** Paints the menu card. The first entry clicked wins: the card is marked
+ * `.chosen` (no pointer events) and later clicks are ignored. `onSelect` is
+ * awaited before the action runs, so the menu is always fully closed (faded out, window resized back down unless the
  * action resizes it itself) first and no action that re-renders or resizes
  * races the close, whether the action succeeds or fails. */
 function renderContextMenu(
@@ -356,6 +357,10 @@ function renderContextMenu(
   onSelect: (resize: boolean) => Promise<void>,
 ): void {
   el.replaceChildren();
+  el.classList.remove("chosen");
+  // One action per menu session: the card stays in the DOM while it fades out,
+  // so a second click must not run a second entry.
+  let chosen = false;
   for (const action of actions) {
     if (action === "separator") {
       const sep = document.createElement("hr");
@@ -381,6 +386,9 @@ function renderContextMenu(
       btn.append(mark, action.label);
     }
     btn.addEventListener("click", () => {
+      if (chosen) return;
+      chosen = true;
+      el.classList.add("chosen");
       void (async () => {
         try {
           await onSelect(!action.resizesWindow);
