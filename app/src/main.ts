@@ -4,9 +4,8 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import {
-  PhysicalPosition,
   PhysicalSize,
 } from "@tauri-apps/api/dpi";
 import {
@@ -50,6 +49,8 @@ export interface Item {
   glyph: string;
   action: string;
   tooltip: string;
+  /** Demonstration cell: shown only while `showExamples` is on. */
+  example?: boolean;
 }
 
 /** The only two themes; anything else in config.json resolves to dark in Rust. */
@@ -63,6 +64,8 @@ export interface OrbitbarConfig {
   fontSize: number;
   /** Desired autostart state. Rust reconciles the OS entry against it on start. */
   autoStart: boolean;
+  /** Whether items flagged `example` are visible. Off by default. */
+  showExamples: boolean;
   items: Item[];
 }
 
@@ -93,11 +96,11 @@ const PANEL_WIDTH = 320;
  * grows the height, not just the width.
  */
 const CONTEXT_MENU_WIDTH = 170;
-const CONTEXT_MENU_MIN_HEIGHT = 270;
-/** Seven entries plus two separators, sized from `.context-menu`'s own CSS;
+const CONTEXT_MENU_MIN_HEIGHT = 337;
+/** Nine entries plus three separators, sized from `.context-menu`'s own CSS;
  * kept as a constant instead of measured so opening the menu never needs an
  * extra hidden-then-remeasure paint. */
-const CONTEXT_MENU_HEIGHT_ESTIMATE = 246;
+const CONTEXT_MENU_HEIGHT_ESTIMATE = 310;
 
 const win = getCurrentWindow();
 
@@ -169,9 +172,18 @@ export function applyTheme(palette: ThemePalette): void {
  * Cells are glyph-only circles. The label stays in the DOM (tooltip target and
  * accessible name) but is never painted — the WPF bar showed no text and
  * painting it would break the silhouette.
+ *
+ * Example items are always rendered but stay `hidden` until `showExamples` is
+ * on, so toggling them (`applyExamplesVisibility`) is a per-cell attribute
+ * change, not a rebuild.
  */
-export function renderCells(container: HTMLElement, items: Item[]): void {
-  container.replaceChildren();
+export function renderCells(container: HTMLElement, items: Item[], showExamples = false): void {
+  container.replaceChildren(buildCells(items, showExamples));
+}
+
+/** Builds the cells off-DOM, so a caller can swap them in with one call. */
+export function buildCells(items: Item[], showExamples: boolean): DocumentFragment {
+  const fragment = document.createDocumentFragment();
   for (const item of items) {
     const cell = document.createElement("div");
     cell.className = "cell";
@@ -180,6 +192,10 @@ export function renderCells(container: HTMLElement, items: Item[]): void {
     cell.setAttribute("aria-label", item.tooltip || item.label);
     cell.dataset.id = item.id;
     cell.dataset.action = item.action;
+    if (item.example) {
+      cell.dataset.example = "true";
+      cell.hidden = !showExamples;
+    }
     // Keep the native drag region from swallowing the click.
     cell.setAttribute("data-tauri-drag-region", "false");
 
@@ -196,35 +212,64 @@ export function renderCells(container: HTMLElement, items: Item[]): void {
     label.textContent = item.label;
     cell.appendChild(label);
 
-    container.appendChild(cell);
+    fragment.appendChild(cell);
+  }
+  return fragment;
+}
+
+/** Shows or hides every example cell in place. */
+function applyExamplesVisibility(container: HTMLElement, show: boolean): void {
+  for (const cell of container.querySelectorAll<HTMLElement>('.cell[data-example="true"]')) {
+    cell.hidden = !show;
   }
 }
 
-/** Right-center a physical window on a monitor, honoring the config margin. */
+/**
+ * Right-center a physical window of `size` on a monitor, honoring the config
+ * margin. The Rust `snap_window` command computes the target position and
+ * applies it together with the size in ONE native operation: separate
+ * set_size / set_position calls show an in-between frame (new size, old
+ * position) that makes the right-anchored bar visibly jump. It also toggles
+ * `resizable` around the change, because the window is created
+ * `resizable: false` and the toolkit (tao) then locks min/max size to the size
+ * at that moment, silently clamping every later resize back to it.
+ */
 async function snapToMonitor(
   monitor: Monitor,
   size: PhysicalSize,
   margin: number,
 ): Promise<void> {
-  const x = monitor.position.x + monitor.size.width - size.width - margin;
-  const y = monitor.position.y + (monitor.size.height - size.height) / 2;
-  await win.setPosition(new PhysicalPosition(x, y));
+  // Re-snapping to the geometry the window already has still makes the OS
+  // repaint it, so an unchanged target is skipped. A drag clears the key
+  // (`enableDrag`), because the user moved the window since the last snap.
+  const key = [
+    monitor.position.x,
+    monitor.position.y,
+    monitor.size.width,
+    monitor.size.height,
+    size.width,
+    size.height,
+    margin,
+  ].join(",");
+  if (key === lastSnapKey) return;
+  await invoke("snap_window", {
+    target: {
+      monitorX: monitor.position.x,
+      monitorY: monitor.position.y,
+      monitorWidth: monitor.size.width,
+      monitorHeight: monitor.size.height,
+      width: size.width,
+      height: size.height,
+      margin,
+    },
+  });
+  lastSnapKey = key;
 }
 
-/**
- * Resize + reposition the window for the requested collapse/panel state.
- *
- * The window is created `resizable: false` (there is no OS chrome to grab
- * with `decorations: false` anyway, so this only stops something else from
- * dragging an edge). On Windows that flag makes tao lock the window's
- * min/max inner size to whatever size it had at the moment `resizable`
- * turned false, and every `setSize` after that is silently clamped back to
- * that locked size — the bar never grows for the panel and the "moved but
- * still 72 wide" window a user sees is `snapToMonitor` positioning for the
- * size that was requested, not the size that was actually applied. Toggling
- * `setResizable` around the resize clears that lock, lets the real size
- * apply, then re-locks it at the new size so nothing else can drag it.
- */
+/** Geometry of the last successful `snap_window`, or null when unknown. */
+let lastSnapKey: string | null = null;
+
+/** Resize + reposition the window for the requested collapse/panel state. */
 async function applyState(
   cfg: OrbitbarConfig,
   panelOpen: boolean,
@@ -233,9 +278,6 @@ async function applyState(
   const size = sizeFor(cfg.collapsed, panelOpen, menuOpen);
   const monitor = await currentMonitor();
   if (!monitor) return;
-  await win.setResizable(true);
-  await win.setSize(size);
-  await win.setResizable(false);
   await snapToMonitor(monitor, size, cfg.margin);
 }
 
@@ -243,14 +285,21 @@ async function applyState(
 interface ContextMenuAction {
   label: string;
   run: () => void | Promise<void>;
-  /** Present only on the theme choices: true marks the one in effect. */
+  /** Present only on checkable entries: true marks the choice in effect. */
   checked?: boolean;
+  /** How a checkable entry behaves: "radio" (one of a group, the default) or
+   * an independent "checkbox". */
+  kind?: "radio" | "checkbox";
+  /** True when the action resizes the window itself, so closing the menu
+   * must not shrink it first (that would be a second, visible resize). */
+  resizesWindow?: boolean;
 }
 
 /**
  * The fixed entry list, in order. "Collapse"/"Expand" reflects `cfg.collapsed`
  * so the label always matches what the click will actually do, and the theme
- * choice in effect (`currentTheme`, the resolved palette name) carries a check.
+ * choice in effect (`currentTheme`, the resolved palette name) carries a check,
+ * and so does "Start with system" when `autostartOn` (the real OS registration).
  */
 function buildContextMenuActions(
   cfg: OrbitbarConfig,
@@ -260,32 +309,58 @@ function buildContextMenuActions(
     toggleCollapsed: () => void | Promise<void>;
     reloadConfig: () => void | Promise<void>;
     setTheme: (theme: ThemeName) => void | Promise<void>;
+    toggleAutostart: () => void | Promise<void>;
+    toggleExamples: () => void | Promise<void>;
     quit: () => void | Promise<void>;
   },
   currentTheme: string,
+  autostartOn: boolean,
 ): (ContextMenuAction | "separator")[] {
   return [
     { label: "Edit config", run: handlers.openConfig },
     { label: "Open pricing file", run: handlers.openPricing },
-    { label: cfg.collapsed ? "Expand" : "Collapse", run: handlers.toggleCollapsed },
+    {
+      label: cfg.collapsed ? "Expand" : "Collapse",
+      run: handlers.toggleCollapsed,
+      resizesWindow: true,
+    },
     { label: "Reload config", run: handlers.reloadConfig },
     "separator",
     { label: "Light", checked: currentTheme === "light", run: () => handlers.setTheme("light") },
     { label: "Dark", checked: currentTheme === "dark", run: () => handlers.setTheme("dark") },
     "separator",
+    {
+      label: "Start with system",
+      checked: autostartOn,
+      kind: "checkbox",
+      run: handlers.toggleAutostart,
+    },
+    {
+      label: "Show example action",
+      checked: cfg.showExamples,
+      kind: "checkbox",
+      run: handlers.toggleExamples,
+    },
+    "separator",
     { label: "Quit Orbitbar", run: handlers.quit },
   ];
 }
 
-/** Paints the menu card. `onSelect` runs before the action itself, so the
- * menu is always closed (and the window resized back down) whether the
- * action succeeds or fails. */
+/** Paints the menu card. The first entry clicked wins: the card is marked
+ * `.chosen` (no pointer events) and later clicks are ignored. `onSelect` is
+ * awaited before the action runs, so the menu is always fully closed (faded out, window resized back down unless the
+ * action resizes it itself) first and no action that re-renders or resizes
+ * races the close, whether the action succeeds or fails. */
 function renderContextMenu(
   el: HTMLElement,
   actions: (ContextMenuAction | "separator")[],
-  onSelect: () => void,
+  onSelect: (resize: boolean) => Promise<void>,
 ): void {
   el.replaceChildren();
+  el.classList.remove("chosen");
+  // One action per menu session: the card stays in the DOM while it fades out,
+  // so a second click must not run a second entry.
+  let chosen = false;
   for (const action of actions) {
     if (action === "separator") {
       const sep = document.createElement("hr");
@@ -301,9 +376,9 @@ function renderContextMenu(
       btn.setAttribute("role", "menuitem");
       btn.textContent = action.label;
     } else {
-      // Radio-style entry: the check slot is always present so labels stay
+      // Checkable entry: the check slot is always present so labels stay
       // aligned whether or not this one is the current choice.
-      btn.setAttribute("role", "menuitemradio");
+      btn.setAttribute("role", action.kind === "checkbox" ? "menuitemcheckbox" : "menuitemradio");
       btn.setAttribute("aria-checked", String(action.checked));
       const mark = document.createElement("span");
       mark.className = "context-menu-check";
@@ -311,8 +386,16 @@ function renderContextMenu(
       btn.append(mark, action.label);
     }
     btn.addEventListener("click", () => {
-      onSelect();
-      void action.run();
+      if (chosen) return;
+      chosen = true;
+      el.classList.add("chosen");
+      void (async () => {
+        try {
+          await onSelect(!action.resizesWindow);
+        } finally {
+          await action.run();
+        }
+      })();
     });
     el.appendChild(btn);
   }
@@ -327,21 +410,59 @@ function positionContextMenu(el: HTMLElement, clickY: number, windowHeight: numb
   el.style.top = `${top}px`;
 }
 
-/** The shared fallback for an item action that has no real behavior yet
- * (`run:<cmd>`, and — until wired — the context menu's Edit config / Open
- * pricing entries): show which id/action fired inside the panel instead of
- * doing nothing, so the wiring can be inspected before it lands. */
+/** Shows one line of text in the panel body and opens the panel. */
+async function showPanelMessage(
+  text: string,
+  body: HTMLElement,
+  togglePanel: (open: boolean) => Promise<void>,
+): Promise<void> {
+  body.replaceChildren();
+  const line = document.createElement("div");
+  line.textContent = text;
+  body.appendChild(line);
+  await togglePanel(true);
+}
+
+/** The shared fallback for an item action with no behavior (`omniroute-status`
+ * and unknown names): show which id/action fired inside the panel instead of
+ * doing nothing. */
 async function showActionPlaceholder(
   id: string,
   action: string,
   body: HTMLElement,
   togglePanel: (open: boolean) => Promise<void>,
 ): Promise<void> {
-  body.replaceChildren();
-  const line = document.createElement("div");
-  line.textContent = `${id}: ${action}`;
-  body.appendChild(line);
-  await togglePanel(true);
+  await showPanelMessage(`${id}: ${action}`, body, togglePanel);
+}
+
+/** True for an absolute http:// or https:// URL, the only kinds `open:` accepts.
+ * The opener capability enforces the same scope on the Rust side. */
+function isWebUrl(raw: string): boolean {
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Runs a launch action (`open:<url>` or `run:<program> [args]`). A `run:` sends
+ * only the item id: the backend looks the command up in its own config.
+ * Returns an error message for the panel, or null on success. */
+async function runLaunchAction(id: string, action: string): Promise<string | null> {
+  try {
+    if (action.startsWith("open:")) {
+      const url = action.slice("open:".length).trim();
+      if (!isWebUrl(url)) return `open: accepts only http:// and https:// URLs (got "${url}")`;
+      await openUrl(url);
+    } else {
+      await invoke("run_command", { id });
+    }
+    return null;
+  } catch (err) {
+    console.error("orbitbar: launch action failed", action, err);
+    return String(err);
+  }
 }
 
 function setCollapsedUi(collapsed: boolean): void {
@@ -567,52 +688,77 @@ async function openContextMenu(
   closePanel: () => Promise<void>,
   setMenuOpen: (open: boolean) => void,
   actions: (ContextMenuAction | "separator")[],
-  onSelect: () => void,
+  onSelect: (resize: boolean) => Promise<void>,
 ): Promise<void> {
   const menu = contextMenuEl;
   if (!menu) return;
-  await withMaskedResize(async () => {
-    await closePanel();
-    setMenuOpen(true);
-    renderContextMenu(menu, actions, onSelect);
-    await applyState(cfg, false, true);
-    const size = sizeFor(cfg.collapsed, false, true);
-    positionContextMenu(menu, clickY, size.height);
-    menu.hidden = false;
+  // A menu still fading out must finish (and shrink the window) before the
+  // next one grows it.
+  if (menuClosing) await menuClosing;
+  await closePanel();
+  setMenuOpen(true);
+  renderContextMenu(menu, actions, onSelect);
+  // Grow the window while the card is still hidden, then fade it in.
+  await applyState(cfg, false, true);
+  const size = sizeFor(cfg.collapsed, false, true);
+  positionContextMenu(menu, clickY, size.height);
+  menu.hidden = false;
+  // Force a style flush so the transition starts from the hidden state.
+  void menu.offsetWidth;
+  menu.classList.add("open");
+}
+
+/** Fade duration of the menu card; keep in step with `.context-menu` in
+ * styles.css. */
+const MENU_FADE_MS = 150;
+
+/** The close in progress, so overlapping closes (Escape, outside click, a
+ * collapse handler) share one fade and one resize. */
+let menuClosing: Promise<void> | null = null;
+
+/** Fades the card out and resolves once the transition is over (or at once
+ * when the user prefers reduced motion). */
+function fadeOutMenu(menu: HTMLElement): Promise<void> {
+  menu.classList.remove("open");
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const finish = () => {
+      menu.removeEventListener("transitionend", onEnd);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onEnd = (ev: TransitionEvent) => {
+      if (ev.target === menu && ev.propertyName === "opacity") finish();
+    };
+    menu.addEventListener("transitionend", onEnd);
+    // Safety net if the transition never fires (e.g. the window is hidden).
+    const timer = setTimeout(finish, MENU_FADE_MS + 60);
   });
 }
 
-/** Resolves after the browser has painted twice, so a state change made
- * before it is on screen before whatever follows. */
-function afterPaint(): Promise<void> {
-  return new Promise((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
-}
-
-/**
- * Runs a window resize with the page painted invisible (`body.resizing`, see
- * styles.css) and reveals it only once the new size, position and menu state
- * are settled. `applyState` resizes and repositions with separate native
- * calls, so without the mask each intermediate window (resized but not yet
- * moved, with newly exposed transparent area) is composited to the screen.
- */
-async function withMaskedResize(change: () => Promise<void>): Promise<void> {
-  document.body.classList.add("resizing");
-  try {
-    await change();
-    await afterPaint();
-  } finally {
-    document.body.classList.remove("resizing");
-  }
-}
-
-/** Closes the menu and restores the window to its plain collapsed/expanded
- * size (never back to the panel — closing the menu does not reopen it). */
-async function closeContextMenu(cfg: OrbitbarConfig, setMenuOpen: (open: boolean) => void): Promise<void> {
+/** Closes the menu: fade the card out first, only THEN hide it and shrink the
+ * window, so the shrink never shows a half-drawn card. `resize: false` is for
+ * actions that resize the window themselves (collapse/expand). Restores the
+ * plain collapsed/expanded size, never the panel. */
+function closeContextMenu(
+  cfg: OrbitbarConfig,
+  setMenuOpen: (open: boolean) => void,
+  resize = true,
+): Promise<void> {
+  const menu = contextMenuEl;
+  if (menuClosing) return menuClosing;
+  if (!menu || menu.hidden) return Promise.resolve();
   setMenuOpen(false);
-  if (contextMenuEl) contextMenuEl.hidden = true;
-  await withMaskedResize(() => applyState(cfg, false, false));
+  menuClosing = (async () => {
+    await fadeOutMenu(menu);
+    menu.hidden = true;
+    if (resize) await applyState(cfg, false, false);
+  })().finally(() => {
+    menuClosing = null;
+  });
+  return menuClosing;
 }
 
 /** Persist the current config object back to disk. */
@@ -643,6 +789,7 @@ function enableDrag(cfg: OrbitbarConfig): void {
     if (target.closest(".tab")) return;
     if (ev.button !== 0) return;
     dragging = true;
+    lastSnapKey = null;
   });
 
   // The OS drives the window during the native drag; when the user releases the
@@ -686,7 +833,7 @@ function applyAutostartUi(cell: HTMLElement, baseTooltip: string, enabled: boole
 /** cell element -> the tooltip the config declared, kept so the state suffix
  * can be recomposed instead of appended twice. Recomputed by `reloadConfig`
  * too, since a reload replaces the cell elements wholesale. */
-function bindAutostartCells(cells: HTMLElement, items: Item[]): Map<HTMLElement, string> {
+function bindAutostartCells(cells: ParentNode, items: Item[]): Map<HTMLElement, string> {
   const map = new Map<HTMLElement, string>();
   for (const item of items) {
     if (item.action !== "toggle-autostart") continue;
@@ -696,18 +843,30 @@ function bindAutostartCells(cells: HTMLElement, items: Item[]): Map<HTMLElement,
   return map;
 }
 
-/** Reads the real OS registration, not the config — they can disagree: the
- * user can revoke the Run key in OS settings without touching our config. */
-async function refreshAutostartUi(autostartCells: Map<HTMLElement, string>): Promise<void> {
-  if (autostartCells.size === 0) return;
+/** Applies one autostart state to every autostart cell, in place. */
+function paintAutostart(autostartCells: Map<HTMLElement, string>, on: boolean): void {
+  for (const [cell, tooltip] of autostartCells) {
+    applyAutostartUi(cell, tooltip, on);
+  }
+}
+
+/** The real OS registration, not the config: they can disagree, since the user
+ * can revoke the Run key in OS settings without touching our config. `null`
+ * when it cannot be read; callers pick their own fallback. */
+async function readAutostart(): Promise<boolean | null> {
   try {
-    const on = await isAutostartEnabled();
-    for (const [cell, tooltip] of autostartCells) {
-      applyAutostartUi(cell, tooltip, on);
-    }
+    return await isAutostartEnabled();
   } catch (err) {
     console.error("orbitbar: could not read autostart state", err);
+    return null;
   }
+}
+
+/** Repaints the autostart cells from the real OS registration. */
+async function refreshAutostartUi(autostartCells: Map<HTMLElement, string>): Promise<void> {
+  if (autostartCells.size === 0) return;
+  const on = await readAutostart();
+  if (on !== null) paintAutostart(autostartCells, on);
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -725,7 +884,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const cfg = payload.config;
 
     const cells = document.querySelector<HTMLElement>("#cells");
-    if (cells) renderCells(cells, cfg.items);
+    if (cells) renderCells(cells, cfg.items, cfg.showExamples);
 
     let autostartCells = cells ? bindAutostartCells(cells, cfg.items) : new Map<HTMLElement, string>();
     await refreshAutostartUi(autostartCells);
@@ -760,16 +919,18 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     const toggleCollapsed = async () => {
-      await closeContextMenu(cfg, setMenuOpen);
+      // The close skips its own shrink: the single applyState below lands the
+      // window straight on its final size. The new look is painted first, in
+      // the still-large (right-anchored) window, so the resize hides nothing.
+      await closeContextMenu(cfg, setMenuOpen, false);
       if (cfg.collapsed) {
         cfg.collapsed = false;
         setCollapsedUi(false);
         await applyState(cfg, panelOpen, false);
       } else {
         cfg.collapsed = true;
-        await togglePanel(false);
         setCollapsedUi(true);
-        await applyState(cfg, false, false);
+        await togglePanel(false);
       }
       await persistConfig(cfg);
     };
@@ -791,9 +952,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     // The menu's "Edit config" entry (reached from the ⚙ cell or a right
     // click) opens config.json in the OS default editor via the opener
     // plugin, scoped to the app config dir (see
-    // src-tauri/capabilities/default.json). `run:<cmd>` stays a documented
-    // placeholder — running an arbitrary command is a security
-    // decision left to the user, see odd/tasks/orbitbar-rebrand.md O9.
+    // src-tauri/capabilities/default.json). Launch actions (`open:<url>`,
+    // `run:<program> [args]`) act only on an explicit cell click.
     const openConfig = async () => {
       try {
         const path = await invoke<string>("get_config_path");
@@ -819,18 +979,23 @@ window.addEventListener("DOMContentLoaded", async () => {
     // window resize beyond what the new collapsed/monitor/margin call for.
     // `cfg` is mutated in place (not replaced) so every closure that already
     // captured it — togglePanel, openUsagePanel, enableDrag, the context menu
-    // actions — keeps seeing the fresh values without being rebound.
+    // actions — keeps seeing the fresh values without being rebound. The new
+    // cells are built (and their autostart state painted) off-DOM, then swapped
+    // in with one call, so no frame shows a blank or half-updated bar.
     const reloadConfig = async () => {
       try {
         const fresh = await invoke<ConfigPayload>("get_config");
+        const autostartOn = (await readAutostart()) ?? fresh.config.autoStart;
         Object.assign(cfg, fresh.config);
         applyTheme(fresh.palette);
         themeName = fresh.palette.name;
         document.documentElement.style.setProperty("--ob-font-size", `${cfg.fontSize}px`);
         if (cells) {
-          renderCells(cells, cfg.items);
-          autostartCells = bindAutostartCells(cells, cfg.items);
-          await refreshAutostartUi(autostartCells);
+          const fragment = buildCells(cfg.items, cfg.showExamples);
+          const bound = bindAutostartCells(fragment, cfg.items);
+          paintAutostart(bound, autostartOn);
+          cells.replaceChildren(fragment);
+          autostartCells = bound;
         }
         setCollapsedUi(cfg.collapsed);
         await applyState(cfg, panelOpen, false);
@@ -839,12 +1004,45 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
-    // Saves the choice, then reuses reloadConfig to fetch the resolved
-    // palette and apply it live: same path as "Reload config", no restart.
+    // Saves the choice, then fetches the resolved palette and applies it: only
+    // CSS custom properties change. The cells are not rebuilt.
     const setTheme = async (theme: ThemeName) => {
       cfg.theme = theme;
       await persistConfig(cfg);
-      await reloadConfig();
+      try {
+        const fresh = await invoke<ConfigPayload>("get_config");
+        applyTheme(fresh.palette);
+        themeName = fresh.palette.name;
+      } catch (err) {
+        console.error("orbitbar: could not apply theme", err);
+      }
+    };
+
+    // Flips the OS registration and persists the choice. Shared by the
+    // autostart cell and the menu's "Start with system" entry. The direction
+    // comes from the real OS state (the user may have revoked the entry
+    // outside the app), falling back to the config when it cannot be read.
+    // If the OS refuses the write, neither the config nor the UI changes.
+    const toggleAutostart = async () => {
+      const next = !((await readAutostart()) ?? cfg.autoStart);
+      try {
+        if (next) await enableAutostart();
+        else await disableAutostart();
+      } catch (err) {
+        console.error("orbitbar: autostart could not be changed", err);
+        await refreshAutostartUi(autostartCells);
+        return;
+      }
+      cfg.autoStart = next;
+      paintAutostart(autostartCells, next);
+      await persistConfig(cfg);
+    };
+
+    // Shows or hides the example cells in place and persists the choice.
+    const toggleExamples = async () => {
+      cfg.showExamples = !cfg.showExamples;
+      if (cells) applyExamplesVisibility(cells, cfg.showExamples);
+      await persistConfig(cfg);
     };
 
     const quit = async () => {
@@ -855,23 +1053,24 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
-    const contextMenuActions = () =>
+    const contextMenuActions = async () =>
       buildContextMenuActions(
         cfg,
-        { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, quit },
+        { openConfig, openPricing, toggleCollapsed, reloadConfig, setTheme, toggleAutostart, toggleExamples, quit },
         themeName,
+        (await readAutostart()) ?? cfg.autoStart,
       );
 
     // Shared by right-click on the bar and left-click on the settings cell,
     // so both open the very same menu anchored at the pointer.
-    const showContextMenu = (clientY: number) =>
+    const showContextMenu = async (clientY: number) =>
       openContextMenu(
         cfg,
         clientY,
         closePanel,
         setMenuOpen,
-        contextMenuActions(),
-        () => void closeContextMenu(cfg, setMenuOpen),
+        await contextMenuActions(),
+        (resize) => closeContextMenu(cfg, setMenuOpen, resize),
       );
 
     const barEl = document.querySelector<HTMLElement>("#bar");
@@ -902,19 +1101,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         // report success it did not get: if the OS refuses the write we leave
         // both the config and the cell showing the old state.
         if (autostartCells.has(target)) {
-          const tooltip = autostartCells.get(target) ?? "";
-          const next = !cfg.autoStart;
-          try {
-            if (next) await enableAutostart();
-            else await disableAutostart();
-          } catch (err) {
-            console.error("orbitbar: autostart could not be changed", err);
-            applyAutostartUi(target, tooltip, cfg.autoStart);
-            return;
-          }
-          cfg.autoStart = next;
-          applyAutostartUi(target, tooltip, next);
-          await persistConfig(cfg);
+          await toggleAutostart();
           return;
         }
 
@@ -942,6 +1129,17 @@ window.addEventListener("DOMContentLoaded", async () => {
         const body = document.querySelector<HTMLElement>("#panel-body");
         if (!body) return;
 
+        // Launch actions act in place: on success the panel is left as it is,
+        // on failure the reason is shown in the panel like any action error.
+        if (action.startsWith("open:") || action.startsWith("run:")) {
+          const failure = await runLaunchAction(target.dataset.id ?? "", action);
+          if (failure !== null) {
+            activePanelAction = action;
+            await showPanelMessage(failure, body, togglePanel);
+          }
+          return;
+        }
+
         if (isUsageAction(action)) {
           // Opening from closed starts on Today; switching agent while the
           // panel is already open keeps the user's current selection.
@@ -951,9 +1149,8 @@ window.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        // Other item actions (omniroute-status, run:cmd, ...) are wired up
-        // separately; a cell click just demonstrates panel geometry until
-        // they land.
+        // Other item actions (omniroute-status, ...) are wired up separately;
+        // a cell click just demonstrates panel geometry until they land.
         activePanelAction = action;
         await showActionPlaceholder(target.dataset.id ?? "", action, body, togglePanel);
       });

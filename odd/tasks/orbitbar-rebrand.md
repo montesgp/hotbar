@@ -152,8 +152,14 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
             hits left (BOM/Notepad-PowerShell-5.1 compat notes in config.rs, one past-tense
             History mention in architecture.md with no dead path, and the still-live
             `extensions/herdr/scripts/*.ps1` files).
-- [ ] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar` (after the folder
-      rename; verify the supported mechanism first).
+- [x] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar`. Engram v2.2.1 has no
+      rename command (`projects consolidate` only merges similar names), so: export
+      `--project herdr-omniroute` (backup kept outside the repo), rewrite `project` to
+      `orbitbar` with fresh session/sync ids (import dedupes by id; relations remapped), import,
+      verify, soft-delete `herdr-omniroute`. Result: `orbitbar` 55 obs / 24 prompts, old
+      project 0 obs. `engram init orbitbar` pins the name locally (`.engram/` gitignored).
+      **Pending (user):** rename the local folder `herdr-omniroute` → `orbitbar` after closing
+      every session using it; relaunch the bar from the new path so autostart re-registers.
 
 - [x] **O10 — Settings cell left-click opens the menu** (user, 2026-09-29): left click on the
   settings (`edit-config`) cell opens the same menu right-click opens today (Edit config,
@@ -182,6 +188,86 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   documented only in an Extensions section; say what the product is, never what it is not; no
   personal/org names (generic examples); requirements accurate (SQLite is bundled, no system
   dependency). Route: delegated writer. Check: grep for stale terms, link check by readback.
+
+- [x] **O15 — Launch actions** (user, 2026-09-29; branch `feat/launch-actions`). (a) `open:<url>`
+  opens an http(s) URL in the OS default browser (opener `openUrl`, scoped to http/https). (b)
+  `run:<program> [args]` spawns a program directly with its arguments — no shell, so no `&&`,
+  pipes or redirection — only on an explicit click, never at startup. (c) Default items ship a
+  cell that opens the Orbitbar GitHub repository (`open:https://github.com/montesgp/orbitbar`) so
+  users see that cells can trigger actions. Docs: action reference + config example.
+  Route: delegated writer. Check: cargo test (RED first on arg parsing / URL validation),
+  clippy, tsc, build.
+- [x] **O16 — Autostart toggle in the settings menu** (user, 2026-09-29): a "Start with system"
+  entry with a check mark reflecting the real OS registration; toggling it updates the OS entry
+  and persists `autoStart` in config.json, so users never edit the file for it. Route: same
+  writer. Check: tsc, build; cargo test if Rust changes.
+
+- [x] **O17 — No flash when a menu entry is selected** (user, 2026-09-29): choosing any settings
+  menu entry flashes the bar while the menu closes. Causes found: (1) `applyState` resizes and
+  moves the window in two native calls, and the O13 `withMaskedResize` hides the whole page
+  meanwhile, so the bar itself blinks; (2) `renderContextMenu` fires `onSelect()` (async close)
+  without awaiting it and runs the action concurrently, so actions that re-render or resize
+  (theme, reload, collapse, autostart) race the close. Fix: one atomic native move+resize
+  (Windows `SetWindowPos`; other OSes keep set_size+set_position), drop the page mask, and run
+  the action only after the close has finished. Route: delegated writer. Check: cargo test,
+  clippy, tsc, build; visual check by the user.
+
+- [x] **O18 — Example action is opt-in** (user, 2026-09-29). The GitHub cell exists only to show
+  that cells can trigger actions: items can be flagged `"example": true`, and a config switch
+  (default off) plus a "Show example action" menu checkbox decide whether example items render.
+  Its label/tooltip says it is an example (e.g. "Example action - opens Orbitbar on GitHub").
+  Docs explain it. Route: delegated writer. Check: cargo test (RED first on default off and
+  example filtering), clippy, tsc, build.
+- [x] **O19 — Smooth menu, no flashes on any entry** (user, 2026-09-29: every menu entry still
+  flashes "as if the whole component reloads"). Find what re-renders or repaints on each entry
+  (e.g. reloadConfig rebuilding every cell, theme applied by full reload, window resize), make
+  updates in place, and give the menu a short fade/slide open and close (~120-180 ms) so it
+  feels smooth while staying fast. Route: same writer. Check: tsc, build; visual check by user.
+
+- [x] **O19b — Menu flash still visible** — accepted as is (user, 2026-09-29: no extra
+  complexity; the separate-window approach was declined). (user, 2026-09-29, after O17 and O19 on the real
+  release build: "el pantallazo no se quita"). The atomic `SetWindowPos`, in-place updates
+  and fade did not remove it, so resizing the transparent WebView2 window itself is the
+  suspect. Proposed next step (pending user decision): render the menu (and later the usage
+  panel) in a separate pre-created always-on-top window shown beside the bar, so opening,
+  selecting and closing never resize the bar's window. (Declined; no decision pending.)
+- [x] **O20 — Leaner build output** (user, 2026-09-29: "eliminar tantas carpetas en los builds").
+  `crate-type = ["rlib"]` (staticlib/cdylib are only for iOS/Android and left an extra
+  `.dll/.lib/.pdb` set per build), `strip = true` already in the release profile (duplicate
+  removed), package description/authors fixed. `app/README.md` gains "Build output": `target/`
+  is Cargo's cache, only `release/bundle/` and the release binary are meant to be used,
+  install from the installer so `cargo clean` is safe, and always build releases through the
+  Tauri CLI. Route: direct inline. Checks: `cargo test` 102/102 (1 ignored), clippy clean,
+  `npx tauri build --no-bundle` OK. Stale `orbitbar_lib.dll/.lib/.pdb` from older builds stay
+  until `cargo clean`.
+
+- [ ] **O21 — Downloadable releases and CI** (implementation done 2026-09-29; release publication pending) (user, 2026-09-29: "que quede todo correcto para
+  otros devs"; branch `chore/release-workflow`). GitHub Actions: `ci.yml` (PRs and pushes:
+  cargo test, clippy, tsc, build on Windows/macOS/Linux) and `release.yml` (tag `v*`:
+  tauri-action builds unsigned installers for Windows, macOS and Linux and publishes a GitHub
+  Release). README leads with Download per OS (including first-run notes for unsigned
+  installers), build-from-source moves to a contributor section; intro reworded ("docked to the
+  edge of your screen, always visible above your other windows"); CONTRIBUTING documents the
+  release process. Then `v0.1.0` from `main`. Route: delegated writer; release run monitored by
+  the coordinator.
+
+- [x] **O22 — Pre-release fixes from the PR #9 review** (user, 2026-09-29: fix all six, then
+  publish v0.1.0). (1) Release publishes only when every platform built: draft release, then a
+  publish job after the matrix. (2) `run:` on Windows resolves `.cmd`/`.bat` shims via
+  `PATHEXT` (e.g. `code`). (3) `run_command` validated in Rust: the frontend sends the item id,
+  the backend resolves its `run:` action from the loaded config. (4) macOS/Linux resize keeps the
+  resizable toggle. (5) Menu entries ignore clicks while the menu is closing (one action per
+  menu session). (6) Docs: no `~` in examples, tracker "Next step" current; single autostart
+  read helper. Route: delegated writer. Check: cargo test (RED first where Rust changes),
+  clippy, tsc, build; CI green on all three OSes.
+
+- [ ] **Follow-ups from the O22 review** (approved 2026-09-29, advisory, not blocking v0.1.0):
+  pin third-party actions in `release.yml` to commit SHAs; `run_command` re-reads config.json on
+  each click and a half-edited file would be quarantined (read without the quarantine path);
+  `closeContextMenu` returns an in-flight close before reading `resize`; release workflow does
+  not check the tag against the app version; no frontend tests for `isWebUrl`, the one-action
+  menu guard and the snap skip. Refuted: collapse from the menu does resize (`togglePanel` has
+  no early return).
 
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
@@ -360,8 +446,14 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   visually inspected; manual click pending.
 - 2026-09-29: O13 done, commit `a0b7a31`. (a) Root cause: `--ob-press-bg` was set to `hoverFg`, the same color as the glyph while pressed; it is now `color-mix(in srgb, hoverBg 78%, hoverFg)`. (b) Flash: `applyState` resizes and repositions with separate native calls, so the intermediate window (new size, old position, freshly exposed transparent area) was composited; open/close now run inside `withMaskedResize` (`body.resizing > * { visibility: hidden }`, revealed two frames after the card is placed). Inferred from code, not visually observed. (c) The settings cell toggles the menu; the window-level `pointerdown` closer skips that cell so its click does not see a closed menu and reopen it. (d) Light `hoverBg` `#F2E6C4` -> `#F0E0B0`, contrast with `#8A5A00` 4.77 -> 4.51. RED: `light_hover_uses_a_stronger_amber_wash` -> GREEN. Checks: `cargo test` 83/83 (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Visual check pending (user).
 - 2026-09-29: O14 done, commit `5622ce3`. README, app/README, docs/architecture, CONTRIBUTING and extensions/README rewritten: Orbitbar name, core idea up front, per-OS tables (prerequisites, runtime, artifacts, config path, autostart), platform status table, Extensions section only for Herdr/OmniRoute. Verified against code: themes, Today default, menu triggers, pricing.json reload, autostart reconcile, command list. Tauri 2 Linux package names checked via context7. Stale-term grep (hotbar, incoders, montesgp, classic, O9, odd/tasks, C:\Users) clean in tracked docs outside odd/; relative links resolve. Open items: LICENSE and herdr-plugin.toml still carry the author handle; Herdr manifest is Windows-only (PowerShell scripts).
+- 2026-09-29: O15 done, commit `1f9513b` (branch `feat/launch-actions`). `open:<url>` uses opener `openUrl` after a TS check that the scheme is http/https; the capability replaces `opener:default` with `opener:allow-open-url` scoped to `http://*` and `https://*` (mailto/tel and reveal-in-dir are no longer granted). `run:` is the new `run_command` command over `launch.rs`: pure `parse_command_line` (whitespace split, double quotes group, empty program or unterminated quote is an error) and `spawn` via `std::process::Command`, no shell, stdio null, detached, reaped on a thread; no Windows creation flags (a console program gets its own visible console, a GUI program shows none). Errors show in the panel. Default items gain `github` (`open:https://github.com/montesgp/orbitbar`, glyph U+2197) before settings. RED: 9 of 12 parser tests failed against a stub, and `default_items_include_the_github_cell_before_settings` failed -> GREEN. Checks: `cargo test` 96 passed (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Not exercised in the running app; manual click pending (user).
+- 2026-09-29: O16 done, commit `07f7210`. Menu gains a "Start with system" checkbox entry (`menuitemcheckbox`) between the theme group and Quit; its check is read from `isAutostartEnabled` each time the menu opens (config fallback if unreadable). The cell and the entry share one `toggleAutostart`: direction from the real OS state, on OS error nothing changes, then `cfg.autoStart` is persisted and all autostart cells are refreshed. Dev builds still never register at startup (Rust reconcile unchanged); the toggle itself calls the plugin as the cell always did. Menu constants 246 -> 283 and 270 -> 310. README and architecture updated. Checks: `tsc --noEmit` clean, `npm run build` OK, `cargo test` 96 passed, clippy clean (no Rust change). Not visually inspected; manual click pending (user).
+- 2026-09-29: O17 done, commit `a0e407a`. Diagnosis confirmed in code: (1) `applyState` did setResizable/setSize/setResizable then setPosition as separate calls; (2) `withMaskedResize` + `body.resizing` hid the whole page including the bar; (3) the menu click ran `onSelect()` unawaited beside `action.run()`. Fix: new sync command `snap_window` (pure `right_center_origin` + `SetWindowPos` with `SWP_NOZORDER|SWP_NOACTIVATE` on Windows, `set_size`+`set_position` elsewhere; resizable is toggled inside the same main-thread command to release/re-take tao's size lock; `SWP_NOCOPYBITS` left off on purpose). Dependency: `windows-sys` 0.61 (already in Cargo.lock as 0.61.2) feature `Win32_UI_WindowsAndMessaging`, under `cfg(windows)`. Mask, `afterPaint` and CSS removed; menu selection now awaits the close, then runs the action. RED: both `right_center_origin` tests failed against a stub -> GREEN. Checks: `cargo test` 98 passed (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Not visually inspected; manual click pending (user).
+- 2026-09-29: O18 done, commit `9f5297c`. `Item.example` (serde default false, omitted when false) and `AppConfig.showExamples` (default false; old configs load). Default `github` item is flagged and its tooltip reads "Example action - opens Orbitbar on GitHub". Example cells always render but stay `hidden` until the switch is on, so the menu's new "Show example action" checkbox (`toggleExamples`) flips an attribute and persists, with no rebuild. Menu constants 310 -> 337 and 283 -> 310. README documents the cell, the default-off switch and how to enable it. RED: `the_default_github_cell_is_flagged_as_an_example` failed against unflagged defaults -> GREEN (the default-off and old-config tests passed at once because the stub already defaulted correctly). Checks: `cargo test` 102 passed (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Not visually inspected; manual click pending (user).
+- 2026-09-29: O19 done, commit `21cd4e7`. Findings: every entry paid for the close (card `hidden` instantly, then a window shrink repaint); Reload and Light/Dark also rebuilt all cells and re-snapped the window to an unchanged size (theme went through the full `reloadConfig`); Collapse/Expand shrank twice (close, then the collapsed size) and set the collapsed UI after the resize; Start with system re-read the OS state after writing it; Edit config/Open pricing also hand focus to an external editor (not fixable from the app); Quit has nothing to repaint. Fix: `snapToMonitor` skips an unchanged geometry (a drag clears the key), theme only calls `applyTheme` with the fresh palette, autostart paints the known state, reload builds cells off-DOM and swaps once, collapse/expand skips the close shrink (`resizesWindow`). Menu: opens by growing the window with the card hidden, then `.open` (opacity 0->1, translateX 8px->0, 150 ms ease-out); closes by removing `.open`, waiting for `transitionend` (fallback 210 ms), then hiding and shrinking; `prefers-reduced-motion` disables the transition. O17 `snap_window` unchanged. Checks: `tsc --noEmit` clean, `npm run build` OK; no Rust change. Not visually inspected; manual click pending (user).
+- 2026-09-29: O21 implementation done on `chore/release-workflow` (commits `ci: add CI and tag-triggered release workflows`, `docs: lead with download and install...`). `ci.yml` (pull_request; push dev/main; Windows, macOS, ubuntu-22.04): checkout@v4, setup-node@v4 (lts, npm cache), dtolnay/rust-toolchain@stable + clippy, Swatinem/rust-cache@v2, Linux deps, `npm ci`, `tsc --noEmit`, `npm run build`, `cargo test`, `cargo clippy -D warnings`. `release.yml` (tags `v*`, workflow_dispatch; `contents: write`): tauri-apps/tauri-action@v1, projectPath app, non-draft release `Orbitbar v__VERSION__`, macOS `--target universal-apple-darwin`, unsigned, no updater plugin. README now leads with Download and install (per-OS files, unsigned first-run notes), build-from-source moved to its own section; CONTRIBUTING documents checks, branch flow and release process. Validation: YAML parses, local cargo test 102 passed (1 ignored), clippy clean, tsc and build OK; workflows not yet run on GitHub. Pending: push branch, PR to dev, CI green, merge to main, tag `v0.1.0` and confirm the release assets.
+- 2026-09-29: O22 done, commits `0e27375` (release: `create-release` draft -> `build` matrix with `releaseId` -> `publish-release` un-drafts, `needs: [create-release, build]`; reruns reuse the draft), `f3f3867` (`run_command(id)` resolves the `run:` action from the loaded config via `launch::command_for_item`; Windows `resolve_program` searches PATH x PATHEXT, default `.COM;.EXE;.BAT;.CMD`, and spawns the full path; std escapes `.bat`/`.cmd` arguments since Rust 1.77.2, toolchain 1.98.1), `4b48f4d` (non-Windows `set_bounds` toggles `resizable` around set_size/set_position), `e721f2c` (menu card gets `.chosen`, `pointer-events: none`, after the first click; one action per session), `416773e` (one `readAutostart` helper returning `null` when unreadable). README: no `~` in examples, `.cmd`/`.bat` resolution documented. RED: 7 of 13 new launch tests failed against stubs (id resolution, non-run refusal, PATHEXT resolution, ordering, default PATHEXT) -> GREEN. Checks: `cargo test` 113 passed (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK, both workflows parse as YAML. Not run on GitHub and not exercised in the running app or on macOS/Linux; manual click pending (user).
 
 ## Next step
 
-O9 is done except `run:<cmd>` (open security decision left to the user). O7 (Engram project
-migration) is the remaining open task.
+O21 and O22 are implemented on `chore/release-workflow`. Remaining: push the branch and open the PR to `dev`, get CI green on all three OSes, merge to `main`, tag `v0.1.0` and confirm the three installers on the published release. `run:` is implemented (O15, hardened in O22); the local folder rename stays with the user, after closing sessions.

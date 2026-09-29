@@ -311,6 +311,32 @@ body.moon .bar {
   border-radius: var(--ob-radius-handle);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
   z-index: 10;
+  /* Fade + a short slide out of the bar side. main.ts adds `.open` after the
+   * window has grown and removes it, then waits for the transition, before
+   * the window shrinks. Keep 150ms in step with MENU_FADE_MS. */
+  opacity: 0;
+  transform: translateX(8px);
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.context-menu.open {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-menu {
+    transform: none;
+    transition: none;
+  }
+}
+
+/* Set as soon as an entry is picked, while the card fades out: the entries
+ * must not take a second click. */
+.context-menu.chosen {
+  pointer-events: none;
 }
 
 .context-menu[hidden] {
@@ -399,6 +425,10 @@ body.moon .bar {
     background 120ms ease,
     color 120ms ease,
     box-shadow 120ms ease;
+}
+
+.cell[hidden] {
+  display: none;
 }
 
 .cell:hover {
@@ -502,11 +532,4 @@ body.collapsed .tab:hover {
 
 .tab {
   display: none;
-}
-
-/* Set by main.ts while the window is being resized for the context menu, so
- * the intermediate frames (new size, old position) are never shown. The
- * window itself is transparent, hence nothing is left behind. */
-body.resizing > * {
-  visibility: hidden;
 }

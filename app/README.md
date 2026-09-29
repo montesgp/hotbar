@@ -35,7 +35,7 @@ app/
 
 Prerequisites per OS (Rust with MSVC and the C++ Build Tools on Windows, Xcode
 Command Line Tools on macOS, WebKitGTK 4.1 development packages on Linux) are
-listed in the [root README](../README.md#install-and-run-on-your-os).
+listed in the [root README](../README.md#build-from-source).
 
 ```sh
 npm install
@@ -84,6 +84,31 @@ never breaks the bar.
 `npm run tauri build` produces regular binaries and installers with no runtime
 to install beyond the OS webview: Windows NSIS `-setup.exe` and `.msi`, macOS
 `.app` and `.dmg`, Linux `.deb`, `.rpm` and `.AppImage`. Output lands in
-`src-tauri/target/release/bundle/`. Windows is the verified platform; macOS
-and Linux bundles are produced by the same Tauri bundler and are pending CI
-verification.
+`src-tauri/target/release/bundle/`. Windows is verified manually; macOS and
+Linux bundles are built by CI. CI (`.github/workflows/ci.yml`) checks every
+pull request on all three OSes, and pushing a `vX.Y.Z` tag runs the Release
+workflow (`.github/workflows/release.yml`), which publishes unsigned
+installers to GitHub Releases. See the release process in
+[CONTRIBUTING.md](../CONTRIBUTING.md#release-process).
+
+Always build releases through the Tauri CLI (`npm run tauri build`, or
+`npx tauri build --no-bundle` for the binary only). A plain
+`cargo build --release` skips Tauri's `custom-protocol` feature: the binary
+then loads the Vite dev server URL instead of the embedded frontend and shows
+an unstyled page.
+
+## Build output
+
+`src-tauri/target/` is Cargo's build cache (git-ignored). It grows to several
+GB because it keeps compiled dependencies for fast rebuilds, split into
+`debug/` (dev runs and tests) and `release/`. Only these paths are meant to be
+used:
+
+| Path | What it is |
+| --- | --- |
+| `target/release/bundle/` | Installers to share or install (`nsis/`, `msi/` on Windows; `dmg/`, `macos/` on macOS; `deb/`, `rpm/`, `appimage/` on Linux) |
+| `target/release/orbitbar(.exe)` | The standalone release binary |
+
+Install Orbitbar from its installer for daily use, so autostart points at the
+installed copy. `cargo clean` (from `src-tauri/`) then reclaims all of
+`target/` safely; the next build recreates it.

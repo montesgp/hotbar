@@ -2,10 +2,10 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Orbitbar is a small floating bar that stays on top of your desktop and shows
-the token usage and cost of your local AI coding agents (Claude Code, Codex
-and OpenCode): overall, per project, and for the time window you pick. It
-runs on Windows, macOS and Linux.
+Orbitbar is a small bar docked to the edge of your screen, always visible
+above your other windows. It shows the token usage and cost of your local AI
+coding agents (Claude Code, Codex and OpenCode): overall, per project, and
+for the time window you pick. It runs on Windows, macOS and Linux.
 
 > Screenshot: coming soon.
 
@@ -24,56 +24,65 @@ runs on Windows, macOS and Linux.
 - **Light and dark themes**, switched live from the bar's menu.
 - **One JSON config file** for items, theme, autostart and placement.
 
-## Quick start
+## Download and install
 
-Orbitbar is built from source with Node.js and a Rust toolchain. Install the
-prerequisites for your OS (below), then:
+Get the latest installers from the
+[Releases page](https://github.com/montesgp/orbitbar/releases/latest) and pick
+the file for your OS:
 
-```sh
-cd app
-npm install
-npm run tauri build   # installer or app bundle for the current OS
-```
-
-Use `npm run tauri dev` instead to run with hot reload while you work on it.
-
-## Install and run on your OS
+| OS | File to pick |
+| --- | --- |
+| Windows | `Orbitbar_<version>_x64-setup.exe` (recommended) or `Orbitbar_<version>_x64_en-US.msi` |
+| macOS | `Orbitbar_<version>_universal.dmg` (Apple silicon and Intel) |
+| Linux | `Orbitbar_<version>_amd64.AppImage` (run it directly), `.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE) |
 
 Agents are optional: Orbitbar reads whichever of Claude Code, Codex and
 OpenCode are installed and reports the others as not installed. SQLite is
-compiled into the binary, so there is nothing else to install on any OS.
+compiled into the binary, so there is nothing else to install.
 
-### Windows
+### First run: unsigned installers
 
-| | |
+The installers are not code-signed, so each OS asks for confirmation the
+first time you open them:
+
+- **Windows:** SmartScreen shows "Windows protected your PC". Choose
+  **More info**, then **Run anyway**.
+- **macOS:** Gatekeeper blocks the app on first launch. Right-click
+  `Orbitbar.app` and choose **Open**, then confirm; or open **System Settings
+  > Privacy & Security** and choose **Open Anyway**.
+- **Linux:** make the AppImage executable and run it:
+  `chmod +x Orbitbar_*.AppImage && ./Orbitbar_*.AppImage`. The `.deb` and
+  `.rpm` packages install with your package manager
+  (`sudo apt install ./Orbitbar_*.deb`, `sudo dnf install ./Orbitbar_*.rpm`).
+
+### Per-OS details
+
+| | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Runtime | WebView2, preinstalled on Windows 10 and 11 | WKWebView, part of macOS | WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`), installed as a dependency by the `.deb` and `.rpm`; the AppImage expects it on the system |
+| Config | `%APPDATA%\com.orbitbar.app\config.json` | `~/Library/Application Support/com.orbitbar.app/config.json` | `~/.config/com.orbitbar.app/config.json` |
+| Autostart | A per-user Registry Run entry | A LaunchAgent | An XDG autostart `.desktop` entry |
+
+### Platform status
+
+| OS | Status |
 | --- | --- |
-| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/) with the MSVC toolchain (`rustup default stable-msvc`), and the Visual Studio C++ Build Tools ("Desktop development with C++") |
-| Runtime | WebView2, which ships with Windows 10 and 11 |
-| Artifacts | NSIS installer (`*-setup.exe`) and `.msi` |
-| Config | `%APPDATA%\com.orbitbar.app\config.json` |
-| Autostart | A per-user Registry Run entry |
+| Windows | Verified manually. Built by CI. |
+| macOS | Built by CI. Not yet verified manually. |
+| Linux | Built by CI. Not yet verified manually. |
 
-### macOS
+## Build from source
 
-| | |
+For contributors and anyone who wants to build their own binary. Install
+Node.js, [Rust](https://rustup.rs/) and the build prerequisites for your OS:
+
+| OS | Build prerequisites |
 | --- | --- |
-| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/), and the Xcode Command Line Tools (`xcode-select --install`) |
-| Runtime | WKWebView, part of macOS |
-| Artifacts | `Orbitbar.app` and a `.dmg` |
-| Config | `~/Library/Application Support/com.orbitbar.app/config.json` |
-| Autostart | A LaunchAgent |
+| Windows | [Node.js](https://nodejs.org/), Rust with the MSVC toolchain (`rustup default stable-msvc`), and the Visual Studio C++ Build Tools ("Desktop development with C++") |
+| macOS | [Node.js](https://nodejs.org/), Rust, and the Xcode Command Line Tools (`xcode-select --install`) |
+| Linux | [Node.js](https://nodejs.org/), Rust, and the WebKitGTK 4.1 development packages (below) |
 
-### Linux
-
-| | |
-| --- | --- |
-| Build prerequisites | [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/), and the WebKitGTK 4.1 development packages (see below) |
-| Runtime | WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu) |
-| Artifacts | `.deb`, `.rpm` and `.AppImage` |
-| Config | `~/.config/com.orbitbar.app/config.json` |
-| Autostart | An XDG autostart `.desktop` entry |
-
-On Debian and Ubuntu, install the build dependencies with:
+On Debian and Ubuntu, install the Linux build dependencies with:
 
 ```sh
 sudo apt update
@@ -84,20 +93,21 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
 For Fedora, Arch and other distributions use the package list in the
 [Tauri prerequisites guide](https://tauri.app/start/prerequisites/).
 
-### Where the build output goes
+Then:
+
+```sh
+cd app
+npm ci
+npm run tauri build   # installer or app bundle for the current OS
+```
+
+Use `npm run tauri dev` instead to run with hot reload while you work on it.
 
 `npm run tauri build` writes the installers under
 `app/src-tauri/target/release/bundle/`, in one folder per format
 (`nsis`, `msi`, `dmg`, `macos`, `deb`, `rpm`, `appimage`). Each OS produces
-its own formats; build on the OS you are targeting.
-
-### Platform status
-
-| OS | Status |
-| --- | --- |
-| Windows | Built and tested. |
-| macOS | Supported through Tauri's bundler; CI verification is planned. |
-| Linux | Supported through Tauri's bundler; CI verification is planned. |
+its own formats; build on the OS you are targeting. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the checks and the release process.
 
 ## Using Orbitbar
 
@@ -108,7 +118,7 @@ its own formats; build on the OS you are targeting.
 - **Right-click the bar** (or the collapsed tab), or **left-click the
   settings cell**, for the menu: edit `config.json`, open `pricing.json`,
   collapse or expand, reload the config without a restart, switch between
-  Light and Dark, or quit. Escape or a click outside closes the menu.
+  Light and Dark, turn **Start with system** or **Show example action** on or off, or quit. Escape or a click outside closes the menu.
 - **Drag the bar** to move it; use the chevron at the top to collapse it to a
   tab.
 
@@ -132,8 +142,8 @@ api-service                 30,900        ~$7.94
 
 ## Configuration
 
-Orbitbar creates `config.json` with defaults on first launch (paths per OS
-above) and rewrites it when you change a setting from the app.
+Orbitbar creates `config.json` with defaults on first launch (paths per OS in
+[Per-OS details](#per-os-details)) and rewrites it when you change a setting from the app.
 
 | Field | Meaning |
 | --- | --- |
@@ -142,8 +152,9 @@ above) and rewrites it when you change a setting from the app.
 | `monitor` | Monitor to dock on; `primary` by default. |
 | `margin` | Gap in pixels between the bar and the screen edge. |
 | `collapsed` | Whether the bar starts as the small tab. |
-| `autoStart` | Start Orbitbar at login (on by default; release builds only). |
-| `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`. |
+| `autoStart` | Start Orbitbar at login (on by default; release builds only). The menu's **Start with system** entry changes it for you: its check mark shows the real OS registration, and selecting it updates the OS entry and this field. |
+| `showExamples` | Show the example cells (items flagged `"example": true`). Off by default. The menu's **Show example action** entry changes it for you. |
+| `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`, and optionally `"example": true`. |
 
 Item actions:
 
@@ -153,7 +164,40 @@ Item actions:
 | `agent-usage:claude`, `agent-usage:codex`, `agent-usage:opencode` | Opens the panel for one agent. |
 | `toggle-autostart` | Turns autostart on or off and updates the OS entry. |
 | `edit-config` | Opens the bar's menu at the click; "Edit config" there opens `config.json` in your default editor. |
-| `run:<command>`, `omniroute-status` | Reserved names. A clicked cell shows a placeholder. |
+| `open:<url>` | Opens an `http://` or `https://` URL in your default browser. Other schemes are rejected and the panel shows why. |
+| `run:<program> [args]` | Starts a program with its arguments when you click the cell. See below. |
+| `omniroute-status` | Reserved name. A clicked cell shows a placeholder. |
+
+`run:` splits the text after the colon on whitespace into a program and its
+arguments; double quotes group an argument that contains spaces. Orbitbar
+starts the program directly, without a shell, so `&&`, `|`, `>` and `%VAR%`
+are passed to the program as plain text. The program runs detached: Orbitbar
+does not wait for it, and it keeps running if you quit the bar. It starts only
+when you click the cell. If it cannot be started, the panel shows the error.
+A console program opens its own console window; a graphical program opens
+only its own window. On Windows a bare program name is looked up on `PATH` with
+each `PATHEXT` extension, so `run:code` finds VS Code's `code.cmd` and other
+`.cmd`/`.bat` launchers, not only `.exe` files. The command comes from
+`config.json`, which Orbitbar reads when you click the cell.
+
+```json
+{ "id": "editor", "glyph": "0x270E", "label": "editor", "tooltip": "Open my project", "action": "run:code \"C:/Projects/my app\"" }
+```
+
+| OS | Example action |
+| --- | --- |
+| Windows | `run:notepad.exe`, or `run:code C:\Projects\my-app` |
+| macOS | `run:open -a Terminal` (`open` is a program on macOS) |
+| Linux | `run:code /home/me/projects/my-app` (there is no shell, so `~` is not expanded: use the full path) |
+
+The default config includes an example cell, `github`, whose action uses
+`open:` to open the Orbitbar repository. It illustrates what a cell can do
+(`open:` a page, `run:` a program) and is hidden by default: items flagged
+`"example": true` appear only while `showExamples` is `true`. Turn it on with
+the menu's **Show example action** entry, or set `"showExamples": true` in
+`config.json`. Flag your own demonstration cells the same way. A `config.json`
+you already have is not rewritten, so add the `github` item there by hand
+(with `"example": true`) if you want it.
 
 If `config.json` cannot be parsed, Orbitbar renames it to
 `config.json.invalid` and starts on the defaults.

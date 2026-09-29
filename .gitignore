@@ -4,3 +4,4 @@
 *.local.json
 .atl/
 .claude/worktrees/
+.engram/

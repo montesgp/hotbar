@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Job graph: create-release -> build (one job per platform) -> publish-release.
+# The release exists as a draft while the installers upload and is published
+# only when every platform built, so a failed platform never leaves a public
+# release with missing installers. Re-running a failed workflow reuses the
+# same draft.
+jobs:
+  create-release:
+    name: Create draft release
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create or reuse the draft release
+        id: draft
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            // A tag push releases that tag; a manual run releases the version
+            // in tauri.conf.json.
+            const version = JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json', 'utf8')).version;
+            const tag = context.ref.startsWith('refs/tags/')
+              ? context.ref.slice('refs/tags/'.length)
+              : `v${version}`;
+            const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo });
+            let release = releases.find((r) => r.draft && r.tag_name === tag);
+            if (!release) {
+              ({ data: release } = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                target_commitish: context.sha,
+                name: `Orbitbar ${tag}`,
+                body: [
+                  'Download the installer for your OS from the assets below. See the',
+                  '[install section of the README](https://github.com/montesgp/orbitbar#download-and-install)',
+                  'for which file to pick.',
+                  '',
+                  'These installers are not code-signed, so Windows SmartScreen and macOS',
+                  'Gatekeeper warn on first run. The README explains how to open them.',
+                ].join('\n'),
+                draft: true,
+                prerelease: false,
+              }));
+            }
+            core.setOutput('release_id', String(release.id));
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            platform: windows-latest
+            args: ''
+          - name: macOS (universal)
+            platform: macos-latest
+            args: '--target universal-apple-darwin'
+          - name: Linux
+            platform: ubuntu-22.04
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Both Apple targets are needed for the universal binary.
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      # Installers are unsigned: no signing or updater secrets are configured.
+      # The release is the draft from create-release, addressed by id.
+      - name: Build and upload installers
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+  publish-release:
+    name: Publish release
+    # Runs only when every build job succeeded.
+    needs: [create-release, build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish the draft release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: Number(process.env.RELEASE_ID),
+              draft: false,
+            });

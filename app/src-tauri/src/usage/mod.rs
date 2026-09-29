@@ -207,17 +207,33 @@ pub fn resolve_paths(home_override: Option<&Path>) -> Option<UsagePaths> {
     })
 }
 
-/// The canonical form of a project path: trimmed, slashes normalized to a
-/// single separator style (backslash), trailing separator removed, so the
-/// same cwd string always buckets to the same project key regardless of
-/// which OS or agent wrote it.
+/// The canonical form of a project path: trimmed, written with the host OS
+/// separator, trailing separator removed, so the same cwd string always
+/// buckets to the same project key and stays a path the OS can walk.
+///
+/// On Windows, where agents mix `/` and `\`, every `/` becomes `\`. On macOS
+/// and Linux the path is kept as written: `/` is the only separator there and
+/// `\` is a legal file-name character, so rewriting `/` into `\` would yield
+/// a path `Path::parent` cannot walk up (project-root resolution then silently
+/// fell back to the raw cwd on those systems).
 pub fn normalize_project_path(path: &str) -> String {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return String::new();
     }
-    let normalized = trimmed.replace('/', "\\");
-    normalized.trim_end_matches(['\\', ' ']).to_string()
+    let normalized = if cfg!(windows) {
+        trimmed.replace('/', "\\")
+    } else {
+        trimmed.to_string()
+    };
+    let sep = std::path::MAIN_SEPARATOR;
+    let without_trailing = normalized.trim_end_matches([sep, ' ']);
+    if without_trailing.is_empty() {
+        // The filesystem root itself ("/"): keep it rather than erase it.
+        sep.to_string()
+    } else {
+        without_trailing.to_string()
+    }
 }
 
 /// The display name for a project key: its last path segment, falling back
@@ -454,9 +470,22 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn normalize_project_path_unifies_separators_and_trims_trailing_slash() {
         assert_eq!(normalize_project_path("C:/repos/orbitbar/"), "C:\\repos\\orbitbar");
         assert_eq!(normalize_project_path("  C:\\repos\\orbitbar\\  "), "C:\\repos\\orbitbar");
+        assert_eq!(normalize_project_path(""), "");
+    }
+
+    /// On macOS and Linux the path must stay walkable with `Path::parent`:
+    /// `/` is kept, only a trailing separator is trimmed, and the root
+    /// survives.
+    #[test]
+    #[cfg(not(windows))]
+    fn normalize_project_path_keeps_unix_separators_and_trims_trailing_slash() {
+        assert_eq!(normalize_project_path("/home/me/orbitbar/"), "/home/me/orbitbar");
+        assert_eq!(normalize_project_path("  /home/me/orbitbar  "), "/home/me/orbitbar");
+        assert_eq!(normalize_project_path("/"), "/");
         assert_eq!(normalize_project_path(""), "");
     }
 

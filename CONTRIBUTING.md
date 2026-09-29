@@ -1,25 +1,32 @@
 # Contributing
 
-## Running the app
+## Development setup
 
-Install the build prerequisites for your OS (see the
-[README](README.md#install-and-run-on-your-os)), then:
+Install the build prerequisites for your OS (see
+[Build from source](README.md#build-from-source)), then:
 
 ```sh
 cd app
-npm install
+npm ci
 npm run tauri dev
 ```
 
-## Tests and checks
+`app/README.md` describes the project layout.
 
-Run these from `app/` before opening a pull request:
+## Checks
+
+CI runs these on Windows, macOS and Linux for every pull request. Run them
+before opening one (`npm run build` first, because the Rust build embeds
+`app/dist`):
 
 ```sh
-cd src-tauri && cargo test                              # Rust unit tests
-cd src-tauri && cargo clippy --all-targets -- -D warnings
+cd app
+npm ci
 npx tsc --noEmit                                        # frontend type check
 npm run build                                           # type check and Vite build
+cd src-tauri
+cargo test                                              # Rust unit tests
+cargo clippy --all-targets -- -D warnings
 ```
 
 There is no frontend test runner yet; `app/src/usage-view.ts` is kept free of
@@ -27,15 +34,13 @@ DOM code so it can be unit tested once one is added.
 
 ## Branches
 
-Work flows through `dev` and `staging` to `main`:
+- Create a feature branch (`feat/...`, `fix/...`, `chore/...`) and open a pull
+  request against `dev`.
+- Releases go from `dev` to `main` through a pull request.
 
 ```
-dev ──► staging ──► main
+feature branch ──► dev ──► main (tagged vX.Y.Z)
 ```
-
-- `dev`: active development. Open pull requests against it.
-- `staging`: pre-release testing.
-- `main`: stable releases.
 
 ## Commit messages
 
@@ -55,3 +60,28 @@ Open a GitHub issue with:
 
 Redact real token history, API keys and any file paths that include your
 username before pasting.
+
+## Release process
+
+1. On a branch from `dev`, bump the version in all four places, keeping them
+   equal:
+   - `app/package.json` (and `app/package-lock.json`, via `npm install`)
+   - `app/src-tauri/tauri.conf.json`
+   - `app/src-tauri/Cargo.toml`
+   - `app/src-tauri/Cargo.lock` (updated by running `cargo check` in
+     `app/src-tauri`)
+2. Merge the bump into `dev`, then merge `dev` into `main` through a pull
+   request once CI is green.
+3. Tag the release on `main` and push the tag:
+
+   ```sh
+   git checkout main && git pull
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+4. The **Release** workflow (`.github/workflows/release.yml`) builds the
+   installers for Windows, macOS (universal) and Linux with
+   `tauri-apps/tauri-action` and publishes them as the GitHub Release
+   "Orbitbar vX.Y.Z". The installers are unsigned. Check the release page
+   afterwards for the expected assets.
