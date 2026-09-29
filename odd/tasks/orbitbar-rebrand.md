@@ -241,7 +241,7 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   `npx tauri build --no-bundle` OK. Stale `orbitbar_lib.dll/.lib/.pdb` from older builds stay
   until `cargo clean`.
 
-- [ ] **O21 — Downloadable releases and CI** (user, 2026-09-29: "que quede todo correcto para
+- [ ] **O21 — Downloadable releases and CI** (implementation done 2026-09-29; release publication pending) (user, 2026-09-29: "que quede todo correcto para
   otros devs"; branch `chore/release-workflow`). GitHub Actions: `ci.yml` (PRs and pushes:
   cargo test, clippy, tsc, build on Windows/macOS/Linux) and `release.yml` (tag `v*`:
   tauri-action builds unsigned installers for Windows, macOS and Linux and publishes a GitHub
@@ -438,3 +438,4 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 
 All tasks done except `run:<cmd>` (security decision left to the user) and the local folder
 rename (user, after closing sessions). `dev` promoted to `main` via PR #6 (2026-09-29).
+- 2026-09-29: O21 implementation done on `chore/release-workflow` (commits `ci: add CI and tag-triggered release workflows`, `docs: lead with download and install...`). `ci.yml` (pull_request; push dev/main; Windows, macOS, ubuntu-22.04): checkout@v4, setup-node@v4 (lts, npm cache), dtolnay/rust-toolchain@stable + clippy, Swatinem/rust-cache@v2, Linux deps, `npm ci`, `tsc --noEmit`, `npm run build`, `cargo test`, `cargo clippy -D warnings`. `release.yml` (tags `v*`, workflow_dispatch; `contents: write`): tauri-apps/tauri-action@v1, projectPath app, non-draft release `Orbitbar v__VERSION__`, macOS `--target universal-apple-darwin`, unsigned, no updater plugin. README now leads with Download and install (per-OS files, unsigned first-run notes), build-from-source moved to its own section; CONTRIBUTING documents checks, branch flow and release process. Validation: YAML parses, local cargo test 102 passed (1 ignored), clippy clean, tsc and build OK; workflows not yet run on GitHub. Pending: push branch, PR to dev, CI green, merge to main, tag `v0.1.0` and confirm the release assets.
