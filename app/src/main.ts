@@ -231,8 +231,8 @@ function applyExamplesVisibility(container: HTMLElement, show: boolean): void {
  * set_size / set_position calls show an in-between frame (new size, old
  * position) that makes the right-anchored bar visibly jump. It also toggles
  * `resizable` around the change, because the window is created
- * `resizable: false` and on Windows tao then locks min/max size to the size at
- * that moment, silently clamping every later resize back to it.
+ * `resizable: false` and the toolkit (tao) then locks min/max size to the size
+ * at that moment, silently clamping every later resize back to it.
  */
 async function snapToMonitor(
   monitor: Monitor,

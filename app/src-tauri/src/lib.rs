@@ -152,7 +152,9 @@ struct SnapTarget {
 ///
 /// Doing it as separate `set_size` / `set_position` calls lets the compositor
 /// show the in-between frame (new size at the old position), which for a
-/// right-anchored bar is a visible jump. On Windows this is one `SetWindowPos`.
+/// right-anchored bar is a visible jump. On Windows this is one `SetWindowPos`;
+/// elsewhere it is `set_size` then `set_position`, the best the platform API
+/// offers.
 /// The window is `resizable: false`, which makes tao lock its min/max size to
 /// the size at that moment and clamp anything else, so `resizable` is toggled
 /// around the call to release and re-take that lock at the new size (a sync
@@ -190,8 +192,16 @@ fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -
 
 #[cfg(not(windows))]
 fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> tauri::Result<()> {
-    window.set_size(PhysicalSize::new(width, height))?;
-    window.set_position(PhysicalPosition::new(x, y))
+    // Same lock as on Windows: the window is `resizable: false`, so the
+    // toolkit may clamp min/max size to the current size. Release it around the
+    // change and take it again at the new size. There is no single native call
+    // here, so size and position stay two steps.
+    window.set_resizable(true)?;
+    let moved = window
+        .set_size(PhysicalSize::new(width, height))
+        .and_then(|()| window.set_position(PhysicalPosition::new(x, y)));
+    let relock = window.set_resizable(false);
+    moved.and(relock)
 }
 
 /// Position a window right-center of a monitor with the config margin.
