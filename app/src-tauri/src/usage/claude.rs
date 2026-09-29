@@ -10,7 +10,9 @@
 //! The window is applied consistently to both the totals and the
 //! per-project breakdown: an entry outside the window never contributes to
 //! either, so the per-project split always matches what the totals claim for
-//! the same window.
+//! the same window. Sessions outside any project (a cwd under the OS temp dir, or an existing
+//! folder that is not inside a repository; see `resolve_project_root`) are
+//! left out of the totals and the project rows alike, so that invariant holds.
 
 use crate::usage::{
     find_jsonl_files, normalize_project_path, pricing, project_display_name, resolve_project_root,
@@ -64,6 +66,10 @@ pub fn read_usage(
     let mut month = Bucket::new();
     let mut projects: HashMap<String, Bucket> = HashMap::new();
     let mut files_scanned = 0u64;
+    // Entries in the window whose cwd is excluded (see `resolve_project_root`).
+    // They are left out of the month totals AND the per-project rows, so the
+    // per-project split still sums to the totals.
+    let mut excluded = 0u64;
 
     for file in &files {
         let Ok(handle) = std::fs::File::open(file) else { continue };
@@ -112,7 +118,18 @@ pub fn read_usage(
 
             let cwd = entry.get("cwd").and_then(Value::as_str).unwrap_or("");
             let cwd = normalize_project_path(cwd);
-            let project_key = if cwd.is_empty() { cwd } else { resolve_project_root(&cwd, root_cache) };
+            // An entry with no cwd stays in the totals without a project row.
+            let project_key = if cwd.is_empty() {
+                cwd
+            } else {
+                match resolve_project_root(&cwd, root_cache) {
+                    Some(root) => root,
+                    None => {
+                        excluded += 1;
+                        continue;
+                    }
+                }
+            };
 
             let model = entry
                 .get("message")
@@ -180,7 +197,10 @@ pub fn read_usage(
         });
     }
 
-    let detail = format!("{} projects - {} files", projects_out.len(), files_scanned);
+    let mut detail = format!("{} projects - {} files", projects_out.len(), files_scanned);
+    if excluded > 0 {
+        detail.push_str(&format!(" - {excluded} entries outside any project not counted"));
+    }
     AgentUsageReport::ok(AGENT, month_totals, projects_out, detail)
 }
 
@@ -317,6 +337,15 @@ mod tests {
         assert_eq!(report.totals.entries, 1);
     }
 
+    /// Fixtures live under the real temp dir, which the system policy would
+    /// exclude; this cache stops its walk at `home` and has no temp dir.
+    fn fixture_cache(home: &std::path::Path) -> ProjectRootCache {
+        ProjectRootCache::with_policy(crate::usage::RootPolicy {
+            temp_dirs: Vec::new(),
+            home: Some(home.to_path_buf()),
+        })
+    }
+
     #[test]
     fn project_breakdown_sums_per_cwd_and_sorts_by_output_desc() {
         let dir = tempdir().unwrap();
@@ -324,13 +353,13 @@ mod tests {
         fs::create_dir_all(&project).unwrap();
         let content = format!(
             "{}\n{}\n",
-            line("req-a", "2026-09-15T10:00:00Z", "C:/repos/small", 100, 10),
-            line("req-b", "2026-09-15T10:01:00Z", "C:/repos/big", 100, 500),
+            line("req-a", "2026-09-15T10:00:00Z", &dir.path().join("small").to_string_lossy().replace('\\', "/"), 100, 10),
+            line("req-b", "2026-09-15T10:01:00Z", &dir.path().join("big").to_string_lossy().replace('\\', "/"), 100, 500),
         );
         fs::write(project.join("session.jsonl"), content).unwrap();
 
         let (start, end) = window();
-        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut fixture_cache(dir.path()));
         assert_eq!(report.projects.len(), 2);
         assert_eq!(report.projects[0].name, "big");
         assert_eq!(report.projects[1].name, "small");
@@ -366,7 +395,7 @@ mod tests {
             start,
             end,
             &pricing::PriceOverrides::default(),
-            &mut ProjectRootCache::new(),
+            &mut fixture_cache(dir.path()),
         );
         assert_eq!(report.projects.len(), 1, "both cwds share the same repo root");
         assert_eq!(report.projects[0].totals.output_tokens, 30, "tokens from both cwds must sum");
@@ -425,5 +454,43 @@ mod tests {
         let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut ProjectRootCache::new());
         // claude-opus-5 cache_write_1h = 10.0 per 1M, not 6.25 (the 5m rate).
         assert_eq!(report.totals.cost, Some(10.0));
+    }
+
+    /// Entries whose cwd is scratch (under the temp dir) or a folder outside
+    /// any repository are not counted anywhere: not in the project rows and
+    /// not in the totals, so the split still sums to the totals. An entry with
+    /// no cwd cannot be judged and stays in the totals.
+    #[test]
+    fn entries_outside_any_project_are_left_out_of_totals_and_rows() {
+        use crate::usage::RootPolicy;
+        let dir = tempdir().unwrap();
+        let temp = dir.path().join("Temp");
+        let plain = dir.path().join("plain");
+        fs::create_dir_all(&plain).unwrap();
+        let cwd = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+        let project = dir.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        let content = format!(
+            "{}\n{}\n{}\n{}\n",
+            line("req-a", "2026-09-15T10:00:00Z", &cwd(&dir.path().join("kept-app").join("app")), 100, 10),
+            line("req-b", "2026-09-15T10:01:00Z", &cwd(&temp.join("gentle-ai-codex-reviewer-1")), 100, 500),
+            line("req-c", "2026-09-15T10:02:00Z", &cwd(&plain), 100, 700),
+            line("req-d", "2026-09-15T10:03:00Z", "", 100, 5),
+        );
+        fs::write(project.join("session.jsonl"), content).unwrap();
+
+        let mut cache = ProjectRootCache::with_policy(RootPolicy {
+            temp_dirs: vec![temp],
+            home: Some(dir.path().to_path_buf()),
+        });
+        let (start, end) = window();
+        let report = read_usage(dir.path(), start, end, &pricing::PriceOverrides::default(), &mut cache);
+
+        assert_eq!(report.totals.entries, 2, "the kept entry and the one with no cwd");
+        assert_eq!(report.totals.output_tokens, 15);
+        assert_eq!(report.projects.len(), 1);
+        assert_eq!(report.projects[0].name, "kept-app");
+        assert_eq!(report.projects[0].totals.output_tokens, 10);
+        assert!(report.detail.contains("2 entries outside any project not counted"), "{}", report.detail);
     }
 }

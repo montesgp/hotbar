@@ -13,7 +13,8 @@
       Two independent shapes side by side, unlike the WPF original's single
       Border: the crescent silhouette belongs to the 72px bar alone (`#bar`,
       clipped to its own border-radius), and the panel is its own lightly
-      rounded rectangular card immediately to its left. Nesting the panel
+      rounded rectangular card immediately beside it (left by default, right
+      when the bar is too close to the left edge; see body.side-right). Nesting the panel
       inside the bar's `overflow: hidden` crescent clips wide content (long
       project paths, the window-select text) against the curve instead of
       the panel's own straight edge.

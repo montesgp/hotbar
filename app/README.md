@@ -24,7 +24,8 @@ app/
   src/usage-view.ts       pure usage-panel view-model (no DOM)
   src/styles.css          bar, panel and menu styling driven by --ob-* properties
   src-tauri/
-    src/lib.rs            Tauri commands, window placement, autostart sync
+    src/lib.rs            Tauri commands, applying window placement, autostart sync
+    src/placement.rs      pure window-placement rules (unit tested)
     src/config.rs         config schema, loader, theme palettes
     src/usage/            per-agent readers and pricing (see architecture.md)
     tauri.conf.json       window flags and bundle config
