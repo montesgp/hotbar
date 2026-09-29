@@ -4,7 +4,7 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import {
   PhysicalPosition,
   PhysicalSize,
@@ -327,21 +327,58 @@ function positionContextMenu(el: HTMLElement, clickY: number, windowHeight: numb
   el.style.top = `${top}px`;
 }
 
-/** The shared fallback for an item action that has no real behavior yet
- * (`run:<cmd>`, and — until wired — the context menu's Edit config / Open
- * pricing entries): show which id/action fired inside the panel instead of
- * doing nothing, so the wiring can be inspected before it lands. */
+/** Shows one line of text in the panel body and opens the panel. */
+async function showPanelMessage(
+  text: string,
+  body: HTMLElement,
+  togglePanel: (open: boolean) => Promise<void>,
+): Promise<void> {
+  body.replaceChildren();
+  const line = document.createElement("div");
+  line.textContent = text;
+  body.appendChild(line);
+  await togglePanel(true);
+}
+
+/** The shared fallback for an item action with no behavior (`omniroute-status`
+ * and unknown names): show which id/action fired inside the panel instead of
+ * doing nothing. */
 async function showActionPlaceholder(
   id: string,
   action: string,
   body: HTMLElement,
   togglePanel: (open: boolean) => Promise<void>,
 ): Promise<void> {
-  body.replaceChildren();
-  const line = document.createElement("div");
-  line.textContent = `${id}: ${action}`;
-  body.appendChild(line);
-  await togglePanel(true);
+  await showPanelMessage(`${id}: ${action}`, body, togglePanel);
+}
+
+/** True for an absolute http:// or https:// URL, the only kinds `open:` accepts.
+ * The opener capability enforces the same scope on the Rust side. */
+function isWebUrl(raw: string): boolean {
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Runs a launch action (`open:<url>` or `run:<program> [args]`). Returns an
+ * error message for the panel, or null on success. */
+async function runLaunchAction(action: string): Promise<string | null> {
+  try {
+    if (action.startsWith("open:")) {
+      const url = action.slice("open:".length).trim();
+      if (!isWebUrl(url)) return `open: accepts only http:// and https:// URLs (got "${url}")`;
+      await openUrl(url);
+    } else {
+      await invoke("run_command", { command: action.slice("run:".length) });
+    }
+    return null;
+  } catch (err) {
+    console.error("orbitbar: launch action failed", action, err);
+    return String(err);
+  }
 }
 
 function setCollapsedUi(collapsed: boolean): void {
@@ -791,9 +828,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     // The menu's "Edit config" entry (reached from the ⚙ cell or a right
     // click) opens config.json in the OS default editor via the opener
     // plugin, scoped to the app config dir (see
-    // src-tauri/capabilities/default.json). `run:<cmd>` stays a documented
-    // placeholder — running an arbitrary command is a security
-    // decision left to the user, see odd/tasks/orbitbar-rebrand.md O9.
+    // src-tauri/capabilities/default.json). Launch actions (`open:<url>`,
+    // `run:<program> [args]`) act only on an explicit cell click.
     const openConfig = async () => {
       try {
         const path = await invoke<string>("get_config_path");
@@ -942,6 +978,17 @@ window.addEventListener("DOMContentLoaded", async () => {
         const body = document.querySelector<HTMLElement>("#panel-body");
         if (!body) return;
 
+        // Launch actions act in place: on success the panel is left as it is,
+        // on failure the reason is shown in the panel like any action error.
+        if (action.startsWith("open:") || action.startsWith("run:")) {
+          const failure = await runLaunchAction(action);
+          if (failure !== null) {
+            activePanelAction = action;
+            await showPanelMessage(failure, body, togglePanel);
+          }
+          return;
+        }
+
         if (isUsageAction(action)) {
           // Opening from closed starts on Today; switching agent while the
           // panel is already open keeps the user's current selection.
@@ -951,9 +998,8 @@ window.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        // Other item actions (omniroute-status, run:cmd, ...) are wired up
-        // separately; a cell click just demonstrates panel geometry until
-        // they land.
+        // Other item actions (omniroute-status, ...) are wired up separately;
+        // a cell click just demonstrates panel geometry until they land.
         activePanelAction = action;
         await showActionPlaceholder(target.dataset.id ?? "", action, body, togglePanel);
       });

@@ -265,7 +265,7 @@ pub fn ensure_pricing_file(path: &PathBuf) -> Result<(), String> {
 }
 
 fn default_items() -> Vec<Item> {
-    let tooltip = "none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | run:cmd | edit-config";
+    let tooltip = "none | omniroute-status | agent-usage | agent-usage:claude | agent-usage:codex | agent-usage:opencode | open:<url> | run:<program> [args] | edit-config";
     vec![
         Item {
             id: "claude".into(),
@@ -294,6 +294,14 @@ fn default_items() -> Vec<Item> {
             glyph: "0x0024".into(),
             action: "agent-usage".into(),
             tooltip: "Live session usage (claude/codex/opencode) - real-time balance".into(),
+        },
+        Item {
+            id: "github".into(),
+            label: "github".into(),
+            // U+2197 NORTH EAST ARROW: "opens outside the app".
+            glyph: "0x2197".into(),
+            action: "open:https://github.com/montesgp/orbitbar".into(),
+            tooltip: "Orbitbar on GitHub".into(),
         },
         Item {
             id: "settings".into(),
@@ -509,6 +517,17 @@ mod tests {
         let path = dir.path().join("nested").join("pricing.json");
         ensure_pricing_file(&path).unwrap();
         assert!(path.exists());
+    }
+
+    /// The shipped bar demonstrates launch actions: one cell opens the project
+    /// page, and it sits right before the settings cell.
+    #[test]
+    fn default_items_include_the_github_cell_before_settings() {
+        let items = default_items();
+        let pos = items.iter().position(|i| i.action == "open:https://github.com/montesgp/orbitbar");
+        let pos = pos.expect("default items must carry the GitHub cell");
+        assert_eq!(items[pos].id, "github");
+        assert_eq!(items[pos + 1].id, "settings");
     }
 
     /// The default set must stay usable: the bar renders nothing if there is

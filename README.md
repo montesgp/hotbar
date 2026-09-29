@@ -153,7 +153,32 @@ Item actions:
 | `agent-usage:claude`, `agent-usage:codex`, `agent-usage:opencode` | Opens the panel for one agent. |
 | `toggle-autostart` | Turns autostart on or off and updates the OS entry. |
 | `edit-config` | Opens the bar's menu at the click; "Edit config" there opens `config.json` in your default editor. |
-| `run:<command>`, `omniroute-status` | Reserved names. A clicked cell shows a placeholder. |
+| `open:<url>` | Opens an `http://` or `https://` URL in your default browser. Other schemes are rejected and the panel shows why. |
+| `run:<program> [args]` | Starts a program with its arguments when you click the cell. See below. |
+| `omniroute-status` | Reserved name. A clicked cell shows a placeholder. |
+
+`run:` splits the text after the colon on whitespace into a program and its
+arguments; double quotes group an argument that contains spaces. Orbitbar
+starts the program directly, without a shell, so `&&`, `|`, `>` and `%VAR%`
+are passed to the program as plain text. The program runs detached: Orbitbar
+does not wait for it, and it keeps running if you quit the bar. It starts only
+when you click the cell. If it cannot be started, the panel shows the error.
+A console program opens its own console window; a graphical program opens
+only its own window.
+
+```json
+{ "id": "editor", "glyph": "0x270E", "label": "editor", "tooltip": "Open my project", "action": "run:code \"C:/Projects/my app\"" }
+```
+
+| OS | Example action |
+| --- | --- |
+| Windows | `run:notepad.exe`, or `run:code C:\Projects\my-app` |
+| macOS | `run:open -a Terminal` (`open` is a program on macOS) |
+| Linux | `run:code ~/projects/my-app` (a `~` is not expanded without a shell; use the full path) |
+
+The default bar includes a `github` cell that uses `open:` to open the
+Orbitbar repository. A `config.json` you already have is not rewritten, so add
+the cell there by hand if you want it.
 
 If `config.json` cannot be parsed, Orbitbar renames it to
 `config.json.invalid` and starts on the defaults.

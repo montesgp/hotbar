@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod config;
+mod launch;
 mod usage;
 
 use serde::Serialize;
@@ -73,6 +74,14 @@ fn ensure_pricing_file(app: tauri::AppHandle) -> Result<String, String> {
     let path = dir.join("pricing.json");
     config::ensure_pricing_file(&path)?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Runs the `run:<program> [args]` item action: spawns the program directly
+/// (no shell) and returns at once. Only the frontend's explicit cell click
+/// calls this; nothing runs at startup. See `launch::spawn`.
+#[tauri::command]
+fn run_command(command: String) -> Result<(), String> {
+    launch::spawn(&command)
 }
 
 /// Exits the whole process, called by the context menu's "Quit Orbitbar".
@@ -210,7 +219,8 @@ pub fn run() {
             get_usage,
             quit_app,
             get_config_path,
-            ensure_pricing_file
+            ensure_pricing_file,
+            run_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

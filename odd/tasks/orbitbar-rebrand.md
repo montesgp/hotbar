@@ -189,6 +189,19 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   personal/org names (generic examples); requirements accurate (SQLite is bundled, no system
   dependency). Route: delegated writer. Check: grep for stale terms, link check by readback.
 
+- [ ] **O15 — Launch actions** (user, 2026-09-29; branch `feat/launch-actions`). (a) `open:<url>`
+  opens an http(s) URL in the OS default browser (opener `openUrl`, scoped to http/https). (b)
+  `run:<program> [args]` spawns a program directly with its arguments — no shell, so no `&&`,
+  pipes or redirection — only on an explicit click, never at startup. (c) Default items ship a
+  cell that opens the Orbitbar GitHub repository (`open:https://github.com/montesgp/orbitbar`) so
+  users see that cells can trigger actions. Docs: action reference + config example.
+  Route: delegated writer. Check: cargo test (RED first on arg parsing / URL validation),
+  clippy, tsc, build.
+- [ ] **O16 — Autostart toggle in the settings menu** (user, 2026-09-29): a "Start with system"
+  entry with a check mark reflecting the real OS registration; toggling it updates the OS entry
+  and persists `autoStart` in config.json, so users never edit the file for it. Route: same
+  writer. Check: tsc, build; cargo test if Rust changes.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
