@@ -87,3 +87,25 @@ to install beyond the OS webview: Windows NSIS `-setup.exe` and `.msi`, macOS
 `src-tauri/target/release/bundle/`. Windows is the verified platform; macOS
 and Linux bundles are produced by the same Tauri bundler and are pending CI
 verification.
+
+Always build releases through the Tauri CLI (`npm run tauri build`, or
+`npx tauri build --no-bundle` for the binary only). A plain
+`cargo build --release` skips Tauri's `custom-protocol` feature: the binary
+then loads the Vite dev server URL instead of the embedded frontend and shows
+an unstyled page.
+
+## Build output
+
+`src-tauri/target/` is Cargo's build cache (git-ignored). It grows to several
+GB because it keeps compiled dependencies for fast rebuilds, split into
+`debug/` (dev runs and tests) and `release/`. Only these paths are meant to be
+used:
+
+| Path | What it is |
+| --- | --- |
+| `target/release/bundle/` | Installers to share or install (`nsis/`, `msi/` on Windows; `dmg/`, `macos/` on macOS; `deb/`, `rpm/`, `appimage/` on Linux) |
+| `target/release/orbitbar(.exe)` | The standalone release binary |
+
+Install Orbitbar from its installer for daily use, so autostart points at the
+installed copy. `cargo clean` (from `src-tauri/`) then reclaims all of
+`target/` safely; the next build recreates it.

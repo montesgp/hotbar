@@ -108,7 +108,7 @@ its own formats; build on the OS you are targeting.
 - **Right-click the bar** (or the collapsed tab), or **left-click the
   settings cell**, for the menu: edit `config.json`, open `pricing.json`,
   collapse or expand, reload the config without a restart, switch between
-  Light and Dark, or quit. Escape or a click outside closes the menu.
+  Light and Dark, turn **Start with system** or **Show example action** on or off, or quit. Escape or a click outside closes the menu.
 - **Drag the bar** to move it; use the chevron at the top to collapse it to a
   tab.
 
@@ -142,8 +142,9 @@ above) and rewrites it when you change a setting from the app.
 | `monitor` | Monitor to dock on; `primary` by default. |
 | `margin` | Gap in pixels between the bar and the screen edge. |
 | `collapsed` | Whether the bar starts as the small tab. |
-| `autoStart` | Start Orbitbar at login (on by default; release builds only). |
-| `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`. |
+| `autoStart` | Start Orbitbar at login (on by default; release builds only). The menu's **Start with system** entry changes it for you: its check mark shows the real OS registration, and selecting it updates the OS entry and this field. |
+| `showExamples` | Show the example cells (items flagged `"example": true`). Off by default. The menu's **Show example action** entry changes it for you. |
+| `items` | The cells on the bar, each with `id`, `glyph`, `label`, `tooltip` and `action`, and optionally `"example": true`. |
 
 Item actions:
 
@@ -153,7 +154,37 @@ Item actions:
 | `agent-usage:claude`, `agent-usage:codex`, `agent-usage:opencode` | Opens the panel for one agent. |
 | `toggle-autostart` | Turns autostart on or off and updates the OS entry. |
 | `edit-config` | Opens the bar's menu at the click; "Edit config" there opens `config.json` in your default editor. |
-| `run:<command>`, `omniroute-status` | Reserved names. A clicked cell shows a placeholder. |
+| `open:<url>` | Opens an `http://` or `https://` URL in your default browser. Other schemes are rejected and the panel shows why. |
+| `run:<program> [args]` | Starts a program with its arguments when you click the cell. See below. |
+| `omniroute-status` | Reserved name. A clicked cell shows a placeholder. |
+
+`run:` splits the text after the colon on whitespace into a program and its
+arguments; double quotes group an argument that contains spaces. Orbitbar
+starts the program directly, without a shell, so `&&`, `|`, `>` and `%VAR%`
+are passed to the program as plain text. The program runs detached: Orbitbar
+does not wait for it, and it keeps running if you quit the bar. It starts only
+when you click the cell. If it cannot be started, the panel shows the error.
+A console program opens its own console window; a graphical program opens
+only its own window.
+
+```json
+{ "id": "editor", "glyph": "0x270E", "label": "editor", "tooltip": "Open my project", "action": "run:code \"C:/Projects/my app\"" }
+```
+
+| OS | Example action |
+| --- | --- |
+| Windows | `run:notepad.exe`, or `run:code C:\Projects\my-app` |
+| macOS | `run:open -a Terminal` (`open` is a program on macOS) |
+| Linux | `run:code ~/projects/my-app` (a `~` is not expanded without a shell; use the full path) |
+
+The default config includes an example cell, `github`, whose action uses
+`open:` to open the Orbitbar repository. It illustrates what a cell can do
+(`open:` a page, `run:` a program) and is hidden by default: items flagged
+`"example": true` appear only while `showExamples` is `true`. Turn it on with
+the menu's **Show example action** entry, or set `"showExamples": true` in
+`config.json`. Flag your own demonstration cells the same way. A `config.json`
+you already have is not rewritten, so add the `github` item there by hand
+(with `"example": true`) if you want it.
 
 If `config.json` cannot be parsed, Orbitbar renames it to
 `config.json.invalid` and starts on the defaults.

@@ -1,8 +1,8 @@
 [package]
 name = "orbitbar"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Floating desktop bar with token usage metrics for local AI coding agents"
+authors = ["Orbitbar contributors"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -12,7 +12,10 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "orbitbar_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop only: the binary links the library as an rlib. `staticlib`/`cdylib`
+# are needed only for Tauri's iOS/Android targets, and building them left an
+# extra .dll/.lib/.pdb set in target/ on every build.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -26,6 +29,9 @@ serde_json = "1"
 dirs = "7"
 chrono = "0.4"
 rusqlite = { version = "0.40", features = ["bundled"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"

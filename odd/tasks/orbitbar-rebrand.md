@@ -189,6 +189,57 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   personal/org names (generic examples); requirements accurate (SQLite is bundled, no system
   dependency). Route: delegated writer. Check: grep for stale terms, link check by readback.
 
+- [x] **O15 — Launch actions** (user, 2026-09-29; branch `feat/launch-actions`). (a) `open:<url>`
+  opens an http(s) URL in the OS default browser (opener `openUrl`, scoped to http/https). (b)
+  `run:<program> [args]` spawns a program directly with its arguments — no shell, so no `&&`,
+  pipes or redirection — only on an explicit click, never at startup. (c) Default items ship a
+  cell that opens the Orbitbar GitHub repository (`open:https://github.com/montesgp/orbitbar`) so
+  users see that cells can trigger actions. Docs: action reference + config example.
+  Route: delegated writer. Check: cargo test (RED first on arg parsing / URL validation),
+  clippy, tsc, build.
+- [x] **O16 — Autostart toggle in the settings menu** (user, 2026-09-29): a "Start with system"
+  entry with a check mark reflecting the real OS registration; toggling it updates the OS entry
+  and persists `autoStart` in config.json, so users never edit the file for it. Route: same
+  writer. Check: tsc, build; cargo test if Rust changes.
+
+- [x] **O17 — No flash when a menu entry is selected** (user, 2026-09-29): choosing any settings
+  menu entry flashes the bar while the menu closes. Causes found: (1) `applyState` resizes and
+  moves the window in two native calls, and the O13 `withMaskedResize` hides the whole page
+  meanwhile, so the bar itself blinks; (2) `renderContextMenu` fires `onSelect()` (async close)
+  without awaiting it and runs the action concurrently, so actions that re-render or resize
+  (theme, reload, collapse, autostart) race the close. Fix: one atomic native move+resize
+  (Windows `SetWindowPos`; other OSes keep set_size+set_position), drop the page mask, and run
+  the action only after the close has finished. Route: delegated writer. Check: cargo test,
+  clippy, tsc, build; visual check by the user.
+
+- [x] **O18 — Example action is opt-in** (user, 2026-09-29). The GitHub cell exists only to show
+  that cells can trigger actions: items can be flagged `"example": true`, and a config switch
+  (default off) plus a "Show example action" menu checkbox decide whether example items render.
+  Its label/tooltip says it is an example (e.g. "Example action - opens Orbitbar on GitHub").
+  Docs explain it. Route: delegated writer. Check: cargo test (RED first on default off and
+  example filtering), clippy, tsc, build.
+- [x] **O19 — Smooth menu, no flashes on any entry** (user, 2026-09-29: every menu entry still
+  flashes "as if the whole component reloads"). Find what re-renders or repaints on each entry
+  (e.g. reloadConfig rebuilding every cell, theme applied by full reload, window resize), make
+  updates in place, and give the menu a short fade/slide open and close (~120-180 ms) so it
+  feels smooth while staying fast. Route: same writer. Check: tsc, build; visual check by user.
+
+- [ ] **O19b — Menu flash still visible** (user, 2026-09-29, after O17 and O19 on the real
+  release build: "el pantallazo no se quita"). The atomic `SetWindowPos`, in-place updates
+  and fade did not remove it, so resizing the transparent WebView2 window itself is the
+  suspect. Proposed next step (pending user decision): render the menu (and later the usage
+  panel) in a separate pre-created always-on-top window shown beside the bar, so opening,
+  selecting and closing never resize the bar's window.
+- [x] **O20 — Leaner build output** (user, 2026-09-29: "eliminar tantas carpetas en los builds").
+  `crate-type = ["rlib"]` (staticlib/cdylib are only for iOS/Android and left an extra
+  `.dll/.lib/.pdb` set per build), `strip = true` already in the release profile (duplicate
+  removed), package description/authors fixed. `app/README.md` gains "Build output": `target/`
+  is Cargo's cache, only `release/bundle/` and the release binary are meant to be used,
+  install from the installer so `cargo clean` is safe, and always build releases through the
+  Tauri CLI. Route: direct inline. Checks: `cargo test` 102/102 (1 ignored), clippy clean,
+  `npx tauri build --no-bundle` OK. Stale `orbitbar_lib.dll/.lib/.pdb` from older builds stay
+  until `cargo clean`.
+
 ## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
 
 - [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
@@ -366,6 +417,11 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
   visually inspected; manual click pending.
 - 2026-09-29: O13 done, commit `a0b7a31`. (a) Root cause: `--ob-press-bg` was set to `hoverFg`, the same color as the glyph while pressed; it is now `color-mix(in srgb, hoverBg 78%, hoverFg)`. (b) Flash: `applyState` resizes and repositions with separate native calls, so the intermediate window (new size, old position, freshly exposed transparent area) was composited; open/close now run inside `withMaskedResize` (`body.resizing > * { visibility: hidden }`, revealed two frames after the card is placed). Inferred from code, not visually observed. (c) The settings cell toggles the menu; the window-level `pointerdown` closer skips that cell so its click does not see a closed menu and reopen it. (d) Light `hoverBg` `#F2E6C4` -> `#F0E0B0`, contrast with `#8A5A00` 4.77 -> 4.51. RED: `light_hover_uses_a_stronger_amber_wash` -> GREEN. Checks: `cargo test` 83/83 (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Visual check pending (user).
 - 2026-09-29: O14 done, commit `5622ce3`. README, app/README, docs/architecture, CONTRIBUTING and extensions/README rewritten: Orbitbar name, core idea up front, per-OS tables (prerequisites, runtime, artifacts, config path, autostart), platform status table, Extensions section only for Herdr/OmniRoute. Verified against code: themes, Today default, menu triggers, pricing.json reload, autostart reconcile, command list. Tauri 2 Linux package names checked via context7. Stale-term grep (hotbar, incoders, montesgp, classic, O9, odd/tasks, C:\Users) clean in tracked docs outside odd/; relative links resolve. Open items: LICENSE and herdr-plugin.toml still carry the author handle; Herdr manifest is Windows-only (PowerShell scripts).
+- 2026-09-29: O15 done, commit `1f9513b` (branch `feat/launch-actions`). `open:<url>` uses opener `openUrl` after a TS check that the scheme is http/https; the capability replaces `opener:default` with `opener:allow-open-url` scoped to `http://*` and `https://*` (mailto/tel and reveal-in-dir are no longer granted). `run:` is the new `run_command` command over `launch.rs`: pure `parse_command_line` (whitespace split, double quotes group, empty program or unterminated quote is an error) and `spawn` via `std::process::Command`, no shell, stdio null, detached, reaped on a thread; no Windows creation flags (a console program gets its own visible console, a GUI program shows none). Errors show in the panel. Default items gain `github` (`open:https://github.com/montesgp/orbitbar`, glyph U+2197) before settings. RED: 9 of 12 parser tests failed against a stub, and `default_items_include_the_github_cell_before_settings` failed -> GREEN. Checks: `cargo test` 96 passed (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Not exercised in the running app; manual click pending (user).
+- 2026-09-29: O16 done, commit `07f7210`. Menu gains a "Start with system" checkbox entry (`menuitemcheckbox`) between the theme group and Quit; its check is read from `isAutostartEnabled` each time the menu opens (config fallback if unreadable). The cell and the entry share one `toggleAutostart`: direction from the real OS state, on OS error nothing changes, then `cfg.autoStart` is persisted and all autostart cells are refreshed. Dev builds still never register at startup (Rust reconcile unchanged); the toggle itself calls the plugin as the cell always did. Menu constants 246 -> 283 and 270 -> 310. README and architecture updated. Checks: `tsc --noEmit` clean, `npm run build` OK, `cargo test` 96 passed, clippy clean (no Rust change). Not visually inspected; manual click pending (user).
+- 2026-09-29: O17 done, commit `a0e407a`. Diagnosis confirmed in code: (1) `applyState` did setResizable/setSize/setResizable then setPosition as separate calls; (2) `withMaskedResize` + `body.resizing` hid the whole page including the bar; (3) the menu click ran `onSelect()` unawaited beside `action.run()`. Fix: new sync command `snap_window` (pure `right_center_origin` + `SetWindowPos` with `SWP_NOZORDER|SWP_NOACTIVATE` on Windows, `set_size`+`set_position` elsewhere; resizable is toggled inside the same main-thread command to release/re-take tao's size lock; `SWP_NOCOPYBITS` left off on purpose). Dependency: `windows-sys` 0.61 (already in Cargo.lock as 0.61.2) feature `Win32_UI_WindowsAndMessaging`, under `cfg(windows)`. Mask, `afterPaint` and CSS removed; menu selection now awaits the close, then runs the action. RED: both `right_center_origin` tests failed against a stub -> GREEN. Checks: `cargo test` 98 passed (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Not visually inspected; manual click pending (user).
+- 2026-09-29: O18 done, commit `9f5297c`. `Item.example` (serde default false, omitted when false) and `AppConfig.showExamples` (default false; old configs load). Default `github` item is flagged and its tooltip reads "Example action - opens Orbitbar on GitHub". Example cells always render but stay `hidden` until the switch is on, so the menu's new "Show example action" checkbox (`toggleExamples`) flips an attribute and persists, with no rebuild. Menu constants 310 -> 337 and 283 -> 310. README documents the cell, the default-off switch and how to enable it. RED: `the_default_github_cell_is_flagged_as_an_example` failed against unflagged defaults -> GREEN (the default-off and old-config tests passed at once because the stub already defaulted correctly). Checks: `cargo test` 102 passed (1 ignored), clippy `-D warnings` clean, `tsc --noEmit` clean, `npm run build` OK. Not visually inspected; manual click pending (user).
+- 2026-09-29: O19 done, commit `21cd4e7`. Findings: every entry paid for the close (card `hidden` instantly, then a window shrink repaint); Reload and Light/Dark also rebuilt all cells and re-snapped the window to an unchanged size (theme went through the full `reloadConfig`); Collapse/Expand shrank twice (close, then the collapsed size) and set the collapsed UI after the resize; Start with system re-read the OS state after writing it; Edit config/Open pricing also hand focus to an external editor (not fixable from the app); Quit has nothing to repaint. Fix: `snapToMonitor` skips an unchanged geometry (a drag clears the key), theme only calls `applyTheme` with the fresh palette, autostart paints the known state, reload builds cells off-DOM and swaps once, collapse/expand skips the close shrink (`resizesWindow`). Menu: opens by growing the window with the card hidden, then `.open` (opacity 0->1, translateX 8px->0, 150 ms ease-out); closes by removing `.open`, waiting for `transitionend` (fallback 210 ms), then hiding and shrinking; `prefers-reduced-motion` disables the transition. O17 `snap_window` unchanged. Checks: `tsc --noEmit` clean, `npm run build` OK; no Rust change. Not visually inspected; manual click pending (user).
 
 ## Next step
 
