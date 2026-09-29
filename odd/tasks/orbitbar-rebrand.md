@@ -131,17 +131,59 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
       `montesgp/hotbar` → `montesgp/orbitbar` with a new description and topics. Remaining
       hotbar/PowerShell mentions are code comments about the config migration and the
       legacy parity source (go away with O8).
-- [ ] **O8 — Remove everything old** (user, 2026-09-28: "todo lo que sea viejo lo borramos...
+- [x] **O8 — Remove everything old** (user, 2026-09-28: "todo lo que sea viejo lo borramos...
       debe quedar lo más clean posible el repo").
       - [x] Stale `HKCU\...\Run\Hotbar` autostart entry removed (pointed to a deleted exe).
       - [x] Finished-feature trackers `odd/tasks/{herdr-hub,hotbar-widget,omniroute-autofallback}.md`
             and the Herdr-only `docs/status-panes.md` deleted (kept in git history and Engram).
-      - [ ] After O5b reaches parity on the author's machine: delete `legacy/windows-widget/`,
-            `extensions/omniroute/legacy-widget/`, and `%APPDATA%\com.hotbar.app` (only after
-            the new app has migrated the config).
-      - [ ] O6 rewrites `README.md`, `docs/architecture.md`, `docs/hotbar.md`, `app/README.md`.
+      - [x] `legacy/windows-widget/` and `extensions/omniroute/legacy-widget/` deleted
+            (`20283d0`, work unit 1 below); `com.hotbar.app` config-dir migration removed from
+            `config.rs` with its 3 tests. `%APPDATA%\com.hotbar.app` on disk is user machine
+            state, not repo content — left for the user to clear manually if wanted.
+      - [x] O6 rewrites `README.md`, `docs/architecture.md`, `docs/hotbar.md`, `app/README.md`.
+            Evidence: `git grep -in "legacy|hotbar|powershell" -- . ':!odd'` → only justified
+            hits left (BOM/Notepad-PowerShell-5.1 compat notes in config.rs, one past-tense
+            History mention in architecture.md with no dead path, and the still-live
+            `extensions/herdr/scripts/*.ps1` files).
 - [ ] **O7 — Engram project migration** `herdr-omniroute` → `orbitbar` (after the folder
       rename; verify the supported mechanism first).
+
+## Polish work units (2026-09-28, branch `chore/orbitbar-polish`)
+
+- [x] **Unit 1 — Remove the legacy PowerShell widget** (user: "borremos el legacy").
+      `git rm -r legacy extensions/omniroute/legacy-widget`; removed the gitignored
+      `legacy/windows-widget/config.json` from disk and its `.gitignore` line; removed
+      `legacy_config_dir`/`migrate_legacy_config` and their 3 tests from `config.rs` (the
+      author's machine already migrated). Reworded every comment/doc pointing at the deleted
+      files (main.ts, usage-view.ts, styles.css, usage/{mod,claude,codex,opencode,pricing}.rs,
+      docs/architecture.md, extensions/README.md, herdr-plugin.toml description) to describe
+      current behavior, keeping the real rationale (dedup rules, windowing, pricing sourcing).
+      Commit `20283d0`. Evidence: `cargo test` 66/66, `cargo clippy --all-targets` clean,
+      `tsc --noEmit` clean, `npm run build` OK.
+- [x] **Unit 2 — Fix the collapsed tab chevron.** It used U+2038 CARET ("‸", points up) instead
+      of U+2039 ("‹", points left — the tab expands leftward). Fixed in `app/index.html` and
+      `app/src/main.ts` `setCollapsedUi`. Commit `044188e`. Evidence: screenshot of the
+      collapsed dev-build window inspected — chevron points left.
+- [x] **Unit 3 — One usage total per project, not per subfolder** (user: "con el total por
+      proyecto es suficiente"). Root cause: projects were keyed by the raw session cwd, so
+      `app`, `app/src-tauri`, `.claude/worktrees/agent-*` showed as separate rows of the same
+      repo. Added `resolve_project_root` (shared by claude/codex/opencode readers, cached per
+      snapshot): walks up from a cwd to the nearest `.git` ancestor, resolves a worktree's
+      `.git` FILE to the main repo root, falls back to the cwd when no `.git` ancestor exists
+      or the path is gone. Bounded at the user's home directory — a bare dotfiles repo directly
+      in `$HOME` would otherwise merge every repo-less project into one row (caught by a real
+      test failure on the author's machine, fixed before landing). Frontend name-collision
+      disambiguation in `usage-view.ts` kept (different repos can still share a folder name).
+      Commit `d10e977`. Evidence: RED → GREEN for 5 new `resolve_project_root` unit tests plus
+      3 "two cwds/worktrees merge into one row" integration tests (one per reader); `cargo test`
+      74/74, clippy clean. Real-data screenshot: `herdr-omniroute` appears as one row per agent
+      (no `app`/`src-tauri` subfolder rows); see Verification below for the full row list.
+- [x] **Unit 4 — Style the panel scrollbar to match the bar.** Added `scrollbar-width: thin` /
+      `scrollbar-color` (Firefox/standard) and `::-webkit-scrollbar*` (WebView2/WebKit) rules
+      to `.panel` using the existing `--ob-text-dim` / `--ob-hover-fg` tokens: 7px, rounded
+      thumb, transparent track. Commit `da47a67`. Evidence: `tsc --noEmit` + `npm run build`
+      OK; screenshot of a scrolled panel inspected — thin styled thumb visible, no content
+      hidden under it.
 
 ## Checks
 
@@ -165,7 +207,24 @@ the AI agents installed locally (claude, codex, opencode), per project and per t
 ## Progress
 
 - 2026-09-28: mapping done (delegated explorer). Branch created. Doc created.
+- 2026-09-28: `chore/orbitbar-polish` branch (based on `dev`) — bounded writer completed the
+  4 polish units above (O8 now fully done). Verification: `cargo test` 74/74,
+  `cargo clippy --all-targets` clean, `npx tsc --noEmit` clean, `npm run build` OK. Screenshots
+  taken against a `npm run tauri dev` instance (PID distinguished from the user's pre-existing
+  `target\release\orbitbar.exe`, which was never touched) and inspected: collapsed tab, `$`
+  panel scrolled/unscrolled. Dev processes stopped after verification
+  (`taskkill /T /F` on the npm→tauri→cargo→orbitbar.exe tree only).
+  Per-project rows observed on the author's machine (ThisMonth), names only:
+  - Claude: incoders-commerce, receipt-risk-detector, incoders-hive, herdr-omniroute,
+    agent-a089898dab7b534a6 (5 rows)
+  - Codex: incoders-commerce, portfolio, digital-menu, patri, personal (5 rows)
+  - OpenCode: herdr-omniroute, patri, montesgp, digital-menu, portfolio (5 rows)
+  No `app`/`src-tauri`/worktree subfolder rows appear for `herdr-omniroute` — confirms Unit 3.
+  `agent-a089898dab7b534a6` stayed a separate row under Claude, consistent with the documented
+  fallback (its session cwd has no reachable `.git` ancestor on this machine, e.g. a deleted
+  worktree checkout).
 
 ## Next step
 
-O1 (personal data), delegated writer.
+O9 (wire edit-config / run:<cmd> actions) or O7 (Engram project migration), whichever the
+user wants next.
