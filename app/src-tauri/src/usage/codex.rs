@@ -206,7 +206,7 @@ pub fn read_usage(
 
     let mut detail = format!("{} projects - {} files", projects_out.len(), files_scanned);
     if no_cwd > 0 {
-        detail.push_str(&format!(" - {no_cwd} sesiones sin cwd atribuible"));
+        detail.push_str(&format!(" - {no_cwd} sessions without a cwd"));
     }
     if excluded > 0 {
         detail.push_str(&format!(" - {excluded} sessions outside any project not counted"));
