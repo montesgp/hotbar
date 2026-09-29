@@ -68,6 +68,8 @@ is test-first; the frontend only applies the result.
       the settings cell, open panel, collapse/expand, near left and right edges, restart.
 - [x] **F4 — Docs.** README (what you get, using, config fields), `docs/architecture.md`,
       `AGENTS.md` if a rule changed.
+- [x] **F5 — Review fixes.** Serialize every placement; convert physical offsets to CSS px.
+      Checks: CI set; manual — quick menu/collapse/drag sequences, scale factor above 100%.
 
 Route: one delegated writer for F1–F4 (2+ non-trivial files: `lib.rs`, `config.rs`,
 `main.ts`, `styles.css`, `Cargo.toml`, docs). One work-unit commit per task.
@@ -122,6 +124,20 @@ then promote to `main` without a tag unless the user asks for a release.
   Writer open question: should "Reload config" also apply an edited `position`? (startup-only now).
   Known cosmetic: chevron does not flip in the left half; possible one-frame jump collapsing a
   left-half bar.
+- F5 done (review WARNINGs `R3-concurrent-applystate-stale-offset`, `R3-bar-dy-physical-as-css`;
+  user approved fixing them before the manual GUI test). `main.ts`: every `place_window` call now
+  runs through one promise queue (`enqueuePlacement`; requests apply in order, none dropped);
+  position + offset are read inside the critical section; the drag-release and collapse/expand
+  config writes (`applyAndRemember`) happen inside it too. `--ob-bar-dy` and the menu's height
+  clamp use physical -> CSS px via `win.scaleFactor()` (also the collapsed-tab paint guess).
+  New DOM-free `placement-view.ts` (`physicalToCss`, `barFromWindow`, `requestKey`, `barMoved`,
+  `collapsedTabDyCss`), untested until a frontend runner exists. The fixed 72x400 / 46x46 window
+  geometry still assumes physical == CSS pixels (pre-existing; at scale > 100% the bar itself is
+  still mis-sized, not addressed here). `npx tsc --noEmit` clean; `npm run build` ok;
+  `cargo test` 135 passed; clippy clean. Commit: see git log
+  (`fix: serialize bar placement and convert offsets to CSS pixels`).
+
 ## Next step
 
-User: manual GUI checks (see F3), then PR `fix/free-placement` to `dev`.
+User: manual GUI checks (see F3; also try a scale factor above 100% and quick menu/collapse/drag
+sequences), then PR `fix/free-placement` to `dev`.

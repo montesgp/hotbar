@@ -7,6 +7,15 @@ import {
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  barFromWindow,
+  barMoved,
+  collapsedTabDyCss,
+  physicalToCss,
+  requestKey,
+  type Rect,
+  type Size,
+} from "./placement-view";
+import {
   agentFromAction,
   buildPanelViewModel,
   isUsageAction,
@@ -76,10 +85,6 @@ export interface ConfigPayload {
  * constants in src-tauri/src/lib.rs, which sizes the window before the webview
  * paints — a mismatch shows up as a clipped crescent, not a layout bug.
  */
-interface Size {
-  width: number;
-  height: number;
-}
 const SIZE_COLLAPSED: Size = { width: 46, height: 46 };
 const SIZE_EXPANDED: Size = { width: 72, height: 400 };
 const PANEL_WIDTH = 320;
@@ -226,13 +231,6 @@ function applyExamplesVisibility(container: HTMLElement, show: boolean): void {
   }
 }
 
-interface Rect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 /** What Rust's `place_window` returns (see src-tauri/src/placement.rs). */
 interface Placement {
   /** The bar itself in screen coordinates. */
@@ -253,27 +251,47 @@ interface Placement {
 let placement: Placement | null = null;
 /** Input of the last `place_window`, to skip a call that would change nothing. */
 let placementKey: string | null = null;
+/** The window's scale factor as of the last placement. Rust and the window
+ * work in physical pixels; every offset that goes into CSS or is compared with
+ * a CSS measurement (`clientY`) is converted with this. */
+let scaleFactor = 1;
+/** Tail of the placement queue, see `enqueuePlacement`. */
+let placementQueue: Promise<unknown> = Promise.resolve();
 
 /** The bar as it is at startup: the window has no menu or panel yet, so the
  * window rectangle is the bar. */
 async function initPlacement(cfg: OrbitbarConfig): Promise<void> {
   const pos = await win.outerPosition();
+  scaleFactor = await win.scaleFactor();
   const rect = { x: pos.x, y: pos.y, ...barSizeFor(cfg.collapsed) };
   placement = { bar: rect, window: rect, side: "left", barOffset: { x: 0, y: 0 }, monitor: null };
   placementKey = null;
 }
 
 /** Vertical offset of the bar inside a window taller than itself (the
- * collapsed tab while the menu is open). */
-function setBarDy(px: number): void {
-  document.documentElement.style.setProperty("--ob-bar-dy", `${px}px`);
+ * collapsed tab while the menu is open), in CSS pixels. */
+function setBarDy(cssPx: number): void {
+  document.documentElement.style.setProperty("--ob-bar-dy", `${cssPx}px`);
 }
 
-/** Draws the menu/panel on the side Rust chose. Physical pixels are used as CSS
- * pixels, the same assumption the bar's fixed 72x400 geometry already makes. */
+/** Draws the menu/panel on the side Rust chose. The bar offset arrives in
+ * physical pixels and is converted for CSS. The bar's own 72x400 geometry
+ * stays a fixed physical-equals-CSS assumption, as it always was. */
 function applyLayout(p: Placement): void {
   document.body.classList.toggle("side-right", p.side === "right");
-  setBarDy(p.barOffset.y);
+  setBarDy(physicalToCss(p.barOffset.y, scaleFactor));
+}
+
+/** Runs placement jobs one at a time, in the order they were requested.
+ * Overlapping requests (a drag release during a menu toggle, collapse next to
+ * a panel close) would otherwise combine the offset of one layout with the
+ * position of another. No request is dropped: the last one requested is the
+ * last one applied, and one that changes nothing is skipped cheaply by the
+ * request key. */
+function enqueuePlacement<T>(job: () => Promise<T>): Promise<T> {
+  const run = placementQueue.then(job, job);
+  placementQueue = run.catch(() => undefined);
+  return run;
 }
 
 /**
@@ -292,27 +310,42 @@ function applyLayout(p: Placement): void {
  * honored rather than undone. Collapsing/expanding changes the bar's size; Rust
  * keeps its vertical center and the horizontal edge nearest the monitor edge.
  */
-async function applyState(
+function applyState(cfg: OrbitbarConfig, panelOpen: boolean, menuOpen: boolean): Promise<Placement> {
+  return enqueuePlacement(() => placeNow(cfg, panelOpen, menuOpen));
+}
+
+/** `applyState`, then copies where the bar ended up into the config inside the
+ * same critical section (so a later placement cannot change it in between).
+ * "always" is for collapse/expand, "ifMoved" for a drag release, where a plain
+ * click on the bar moves nothing and must not write the config. Resolves true
+ * when the config changed and needs saving. */
+function applyAndRemember(
   cfg: OrbitbarConfig,
   panelOpen: boolean,
   menuOpen: boolean,
-): Promise<Placement> {
+  mode: "always" | "ifMoved",
+): Promise<boolean> {
+  return enqueuePlacement(async () => {
+    const before = placement?.bar;
+    const placed = await placeNow(cfg, panelOpen, menuOpen);
+    if (mode === "ifMoved" && !barMoved(before, placed.bar)) return false;
+    return rememberBar(cfg);
+  });
+}
+
+/** The body of a placement; only ever runs inside `enqueuePlacement`, which is
+ * why it may read the live window position and the last placement together. */
+async function placeNow(cfg: OrbitbarConfig, panelOpen: boolean, menuOpen: boolean): Promise<Placement> {
   const last = placement;
   if (!last) throw new Error("placement not initialised");
   const size = barSizeFor(cfg.collapsed);
   const extra = extraFor(cfg.collapsed, panelOpen, menuOpen);
   const pos = await win.outerPosition();
-  const bar: Rect = {
-    x: pos.x + last.barOffset.x,
-    y: pos.y + last.barOffset.y,
-    width: last.bar.width,
-    height: last.bar.height,
-  };
+  scaleFactor = await win.scaleFactor();
+  const bar = barFromWindow(pos, last);
   // Re-placing the geometry the window already has still makes the OS repaint
   // it, so an unchanged request is skipped.
-  const keyOf = (b: Rect) =>
-    [b.x, b.y, b.width, b.height, size.width, size.height, extra.width, extra.height].join(",");
-  if (keyOf(bar) === placementKey) return last;
+  if (requestKey(bar, size, extra) === placementKey) return last;
   const placed = await invoke<Placement>("place_window", {
     target: {
       bar,
@@ -324,7 +357,7 @@ async function applyState(
   });
   applyLayout(placed);
   placement = placed;
-  placementKey = keyOf(placed.bar);
+  placementKey = requestKey(placed.bar, size, extra);
   return placed;
 }
 
@@ -462,8 +495,8 @@ function renderContextMenu(
 }
 
 /** Places the menu near the click, clamped so it never runs off the (now
- * widened) window — `windowHeight` is the size the window was just resized
- * to, not the size it had when the click happened. */
+ * widened) window — `windowHeight` (CSS pixels, like `clickY`) is the size the
+ * window was just resized to, not the size it had when the click happened. */
 function positionContextMenu(el: HTMLElement, clickY: number, windowHeight: number): void {
   const maxTop = Math.max(6, windowHeight - CONTEXT_MENU_HEIGHT_ESTIMATE - 6);
   const top = Math.min(Math.max(clickY - 8, 6), maxTop);
@@ -762,7 +795,7 @@ async function openContextMenu(
   renderContextMenu(menu, actions, onSelect);
   // Grow the window while the card is still hidden, then fade it in.
   const placed = await applyState(cfg, false, true);
-  positionContextMenu(menu, clickY, placed.window.height);
+  positionContextMenu(menu, clickY, physicalToCss(placed.window.height, scaleFactor));
   menu.hidden = false;
   // Force a style flush so the transition starts from the hidden state.
   void menu.offsetWidth;
@@ -841,7 +874,7 @@ async function persistConfig(cfg: OrbitbarConfig): Promise<void> {
  * the window for whatever is open, which also moves the menu/panel to the side
  * with room at the new position.
  */
-function enableDrag(cfg: OrbitbarConfig, reflow: () => Promise<Placement>): void {
+function enableDrag(cfg: OrbitbarConfig, reflow: () => Promise<boolean>): void {
   const bar = document.querySelector<HTMLElement>("#bar");
   if (!bar) return;
 
@@ -861,11 +894,8 @@ function enableDrag(cfg: OrbitbarConfig, reflow: () => Promise<Placement>): void
     if (!dragging) return;
     dragging = false;
     void (async () => {
-      const before = placement?.bar;
-      const placed = await reflow();
       // A plain click on the bar background moves nothing: no config write.
-      if (before && before.x === placed.bar.x && before.y === placed.bar.y) return;
-      if (rememberBar(cfg)) await persistConfig(cfg);
+      if (await reflow()) await persistConfig(cfg);
     })();
   });
 }
@@ -959,11 +989,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     setCollapsedUi(cfg.collapsed);
     setPanelUi(panelOpen);
 
-    const togglePanel = async (open: boolean) => {
+    const togglePanel = async (open: boolean, remember = false) => {
       panelOpen = open;
       if (!open) activePanelAction = null;
       setPanelUi(panelOpen);
-      await applyState(cfg, panelOpen, menuOpen);
+      if (remember) await applyAndRemember(cfg, panelOpen, menuOpen, "always");
+      else await applyState(cfg, panelOpen, menuOpen);
     };
 
     const closePanel = async () => {
@@ -983,19 +1014,19 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (cfg.collapsed) {
         cfg.collapsed = false;
         setCollapsedUi(false);
-        await applyState(cfg, panelOpen, false);
+        // Expanding re-anchors the bar, so its position changed.
+        await applyAndRemember(cfg, panelOpen, false, "always");
       } else {
         cfg.collapsed = true;
         // The tab ends up centered on the bar's center (Rust keeps that
         // point), so paint it there in the window that is still tall.
         if (placement) {
-          setBarDy(Math.max(0, (placement.window.height - SIZE_COLLAPSED.height) / 2));
+          setBarDy(collapsedTabDyCss(placement.window.height, SIZE_COLLAPSED.height, scaleFactor));
         }
         setCollapsedUi(true);
-        await togglePanel(false);
+        // Collapsing re-anchors the bar, so its position changed.
+        await togglePanel(false, true);
       }
-      // Collapsing or expanding re-anchors the bar, so its position changed.
-      rememberBar(cfg);
       await persistConfig(cfg);
     };
 
@@ -1239,7 +1270,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       void closePanel();
     });
 
-    enableDrag(cfg, () => applyState(cfg, panelOpen, menuOpen));
+    enableDrag(cfg, () => applyAndRemember(cfg, panelOpen, menuOpen, "ifMoved"));
   } catch (err) {
     console.error("orbitbar: failed to load config", err);
   }
