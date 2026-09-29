@@ -202,31 +202,6 @@ fn place_window(window: WebviewWindow, target: PlaceTarget) -> Result<PlaceResul
     Ok(PlaceResult { placement: placed, monitor: monitors[index].name().cloned() })
 }
 
-/// Monitor rectangle and window size (all physical pixels) for `snap_window`.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapTarget {
-    monitor_x: i32,
-    monitor_y: i32,
-    monitor_width: u32,
-    monitor_height: u32,
-    width: u32,
-    height: u32,
-    margin: i32,
-}
-
-/// Legacy right-edge snap, still called by the frontend until it moves to
-/// `place_window`; removed together with that switch.
-#[tauri::command]
-fn snap_window(window: WebviewWindow, target: SnapTarget) -> Result<(), String> {
-    let (x, y) = placement::right_center_origin(
-        (target.monitor_x, target.monitor_y, target.monitor_width, target.monitor_height),
-        (target.width, target.height),
-        target.margin,
-    );
-    set_bounds(&window, x, y, target.width, target.height).map_err(|e| e.to_string())
-}
-
 #[cfg(windows)]
 fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> tauri::Result<()> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
@@ -360,8 +335,7 @@ pub fn run() {
             get_config_path,
             ensure_pricing_file,
             run_command,
-            place_window,
-            snap_window
+            place_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

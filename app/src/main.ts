@@ -5,15 +5,7 @@ import {
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import {
-  PhysicalSize,
-} from "@tauri-apps/api/dpi";
-import {
-  currentMonitor,
-  getCurrentWindow,
-  monitorFromPoint,
-  type Monitor,
-} from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   agentFromAction,
   buildPanelViewModel,
@@ -66,6 +58,10 @@ export interface OrbitbarConfig {
   autoStart: boolean;
   /** Whether items flagged `example` are visible. Off by default. */
   showExamples: boolean;
+  /** Where the bar was last dropped (physical screen pixels, top-left). Absent
+   * until it is first moved; Rust falls back to right-center of `monitor`
+   * when it is absent or no longer on any monitor. */
+  position?: { x: number; y: number } | null;
   items: Item[];
 }
 
@@ -80,8 +76,12 @@ export interface ConfigPayload {
  * constants in src-tauri/src/lib.rs, which sizes the window before the webview
  * paints — a mismatch shows up as a clipped crescent, not a layout bug.
  */
-const SIZE_COLLAPSED = new PhysicalSize(46, 46);
-const SIZE_EXPANDED = new PhysicalSize(72, 400);
+interface Size {
+  width: number;
+  height: number;
+}
+const SIZE_COLLAPSED: Size = { width: 46, height: 46 };
+const SIZE_EXPANDED: Size = { width: 72, height: 400 };
 const PANEL_WIDTH = 320;
 
 /**
@@ -90,10 +90,11 @@ const PANEL_WIDTH = 320;
  * styled with the `--ob-*` tokens like the panel, which an OS-drawn menu
  * cannot be. A 72px (or 46px collapsed) window has no room to show it, so it
  * borrows the same trick `applyState` already uses for the usage panel —
- * temporarily widen the window leftwards, snap to the right edge, restore on
- * close. `CONTEXT_MENU_MIN_HEIGHT` only matters collapsed: the 46px-tall tab
- * window is shorter than the menu itself, so opening it while collapsed also
- * grows the height, not just the width.
+ * temporarily widen the window toward the side of the bar that has room (the
+ * bar itself never moves on screen), restore on close.
+ * `CONTEXT_MENU_MIN_HEIGHT` only matters collapsed: the 46px-tall tab window
+ * is shorter than the menu itself, so opening it while collapsed also grows
+ * the height, not just the width.
  */
 const CONTEXT_MENU_WIDTH = 170;
 const CONTEXT_MENU_MIN_HEIGHT = 337;
@@ -115,20 +116,21 @@ window.addEventListener("contextmenu", (ev) => {
   ev.preventDefault();
 });
 
-/** Current window size for a collapse/panel/menu combination. Only one of
- * `panelOpen` / `menuOpen` is ever true at a time — opening the menu closes
- * the panel first, see `openContextMenu`. */
-function sizeFor(collapsed: boolean, panelOpen: boolean, menuOpen: boolean): PhysicalSize {
+/** The bar's own size for a collapse state. */
+function barSizeFor(collapsed: boolean): Size {
+  return collapsed ? SIZE_COLLAPSED : SIZE_EXPANDED;
+}
+
+/** Room the menu or panel needs beside the bar; `height` is a minimum for the
+ * window, which is never shorter than the bar. Only one of `panelOpen` /
+ * `menuOpen` is ever true at a time — opening the menu closes the panel first,
+ * see `openContextMenu` — and a collapsed bar has no panel. */
+function extraFor(collapsed: boolean, panelOpen: boolean, menuOpen: boolean): Size {
   if (menuOpen) {
-    const base = collapsed ? SIZE_COLLAPSED.width : SIZE_EXPANDED.width;
-    const height = collapsed ? CONTEXT_MENU_MIN_HEIGHT : SIZE_EXPANDED.height;
-    return new PhysicalSize(base + CONTEXT_MENU_WIDTH, height);
+    return { width: CONTEXT_MENU_WIDTH, height: collapsed ? CONTEXT_MENU_MIN_HEIGHT : 0 };
   }
-  if (collapsed) return SIZE_COLLAPSED;
-  return new PhysicalSize(
-    SIZE_EXPANDED.width + (panelOpen ? PANEL_WIDTH : 0),
-    SIZE_EXPANDED.height,
-  );
+  if (panelOpen && !collapsed) return { width: PANEL_WIDTH, height: 0 };
+  return { width: 0, height: 0 };
 }
 
 /** Map a Rust palette to CSS custom properties on :root. */
@@ -224,61 +226,119 @@ function applyExamplesVisibility(container: HTMLElement, show: boolean): void {
   }
 }
 
-/**
- * Right-center a physical window of `size` on a monitor, honoring the config
- * margin. The Rust `snap_window` command computes the target position and
- * applies it together with the size in ONE native operation: separate
- * set_size / set_position calls show an in-between frame (new size, old
- * position) that makes the right-anchored bar visibly jump. It also toggles
- * `resizable` around the change, because the window is created
- * `resizable: false` and the toolkit (tao) then locks min/max size to the size
- * at that moment, silently clamping every later resize back to it.
- */
-async function snapToMonitor(
-  monitor: Monitor,
-  size: PhysicalSize,
-  margin: number,
-): Promise<void> {
-  // Re-snapping to the geometry the window already has still makes the OS
-  // repaint it, so an unchanged target is skipped. A drag clears the key
-  // (`enableDrag`), because the user moved the window since the last snap.
-  const key = [
-    monitor.position.x,
-    monitor.position.y,
-    monitor.size.width,
-    monitor.size.height,
-    size.width,
-    size.height,
-    margin,
-  ].join(",");
-  if (key === lastSnapKey) return;
-  await invoke("snap_window", {
-    target: {
-      monitorX: monitor.position.x,
-      monitorY: monitor.position.y,
-      monitorWidth: monitor.size.width,
-      monitorHeight: monitor.size.height,
-      width: size.width,
-      height: size.height,
-      margin,
-    },
-  });
-  lastSnapKey = key;
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
-/** Geometry of the last successful `snap_window`, or null when unknown. */
-let lastSnapKey: string | null = null;
+/** What Rust's `place_window` returns (see src-tauri/src/placement.rs). */
+interface Placement {
+  /** The bar itself in screen coordinates. */
+  bar: Rect;
+  /** The window that holds the bar plus the open menu/panel. */
+  window: Rect;
+  /** Which side of the bar the menu/panel is drawn on. */
+  side: "left" | "right";
+  /** The bar's top-left relative to the window's top-left. */
+  barOffset: { x: number; y: number };
+  /** Name of the monitor the bar is on. */
+  monitor: string | null;
+}
 
-/** Resize + reposition the window for the requested collapse/panel state. */
+/** The last placement Rust applied. It says where the bar sits inside the
+ * window, which is how a live window position turns back into a bar position
+ * (after a drag, or before a resize). */
+let placement: Placement | null = null;
+/** Input of the last `place_window`, to skip a call that would change nothing. */
+let placementKey: string | null = null;
+
+/** The bar as it is at startup: the window has no menu or panel yet, so the
+ * window rectangle is the bar. */
+async function initPlacement(cfg: OrbitbarConfig): Promise<void> {
+  const pos = await win.outerPosition();
+  const rect = { x: pos.x, y: pos.y, ...barSizeFor(cfg.collapsed) };
+  placement = { bar: rect, window: rect, side: "left", barOffset: { x: 0, y: 0 }, monitor: null };
+  placementKey = null;
+}
+
+/** Vertical offset of the bar inside a window taller than itself (the
+ * collapsed tab while the menu is open). */
+function setBarDy(px: number): void {
+  document.documentElement.style.setProperty("--ob-bar-dy", `${px}px`);
+}
+
+/** Draws the menu/panel on the side Rust chose. Physical pixels are used as CSS
+ * pixels, the same assumption the bar's fixed 72x400 geometry already makes. */
+function applyLayout(p: Placement): void {
+  document.body.classList.toggle("side-right", p.side === "right");
+  setBarDy(p.barOffset.y);
+}
+
+/**
+ * Resize + reposition the window for the requested collapse/panel/menu state
+ * WITHOUT moving the bar: Rust's `place_window` grows the window toward the
+ * side of the bar that has room, keeps everything inside the monitor's work
+ * area and applies position AND size in ONE native operation. Separate
+ * set_size / set_position calls show an in-between frame (new size, old
+ * position) that makes the bar visibly jump. It also toggles `resizable` around
+ * the change, because the window is created `resizable: false` and the toolkit
+ * (tao) then locks min/max size to the size at that moment, silently clamping
+ * every later resize back to it.
+ *
+ * The bar's position is read back from the live window (position + the offset
+ * of the last placement), so a drag, or anything else that moved the window, is
+ * honored rather than undone. Collapsing/expanding changes the bar's size; Rust
+ * keeps its vertical center and the horizontal edge nearest the monitor edge.
+ */
 async function applyState(
   cfg: OrbitbarConfig,
   panelOpen: boolean,
   menuOpen: boolean,
-): Promise<void> {
-  const size = sizeFor(cfg.collapsed, panelOpen, menuOpen);
-  const monitor = await currentMonitor();
-  if (!monitor) return;
-  await snapToMonitor(monitor, size, cfg.margin);
+): Promise<Placement> {
+  const last = placement;
+  if (!last) throw new Error("placement not initialised");
+  const size = barSizeFor(cfg.collapsed);
+  const extra = extraFor(cfg.collapsed, panelOpen, menuOpen);
+  const pos = await win.outerPosition();
+  const bar: Rect = {
+    x: pos.x + last.barOffset.x,
+    y: pos.y + last.barOffset.y,
+    width: last.bar.width,
+    height: last.bar.height,
+  };
+  // Re-placing the geometry the window already has still makes the OS repaint
+  // it, so an unchanged request is skipped.
+  const keyOf = (b: Rect) =>
+    [b.x, b.y, b.width, b.height, size.width, size.height, extra.width, extra.height].join(",");
+  if (keyOf(bar) === placementKey) return last;
+  const placed = await invoke<Placement>("place_window", {
+    target: {
+      bar,
+      barWidth: size.width,
+      barHeight: size.height,
+      extraWidth: extra.width,
+      extraHeight: extra.height,
+    },
+  });
+  applyLayout(placed);
+  placement = placed;
+  placementKey = keyOf(placed.bar);
+  return placed;
+}
+
+/** Copies where the bar is now into the config. True when that changed it.
+ * Only a drag or a collapse/expand calls this: opening a menu never moves the
+ * bar, so it must not write a position the user never chose. */
+function rememberBar(cfg: OrbitbarConfig): boolean {
+  if (!placement) return false;
+  const { x, y } = placement.bar;
+  const monitor = placement.monitor || "primary";
+  const changed = cfg.position?.x !== x || cfg.position?.y !== y || cfg.monitor !== monitor;
+  cfg.position = { x, y };
+  cfg.monitor = monitor;
+  return changed;
 }
 
 /** One clickable row, or the literal string "separator" for a divider. */
@@ -471,6 +531,7 @@ function setCollapsedUi(collapsed: boolean): void {
   if (collapse) {
     // The chevron points where the motion goes: collapsing shrinks the bar
     // toward the screen edge (right), expanding grows it into the desktop (left).
+    // It is drawn for the default right-edge position and does not flip.
     collapse.innerHTML = collapsed ? "&#8249;" : "&#8250;";
   }
 }
@@ -678,7 +739,8 @@ const contextMenuEl = document.querySelector<HTMLElement>("#context-menu");
 /**
  * Opens the right-click menu at `clickY`: closes the panel (only one of the
  * two ever occupies the widened area), widens+resizes the window for the
- * menu, then paints and positions the card. `setMenuOpen` updates the
+ * menu on the side of the bar that has room, then paints and positions the
+ * card. The bar does not move. `setMenuOpen` updates the
  * `menuOpen` flag declared in DOMContentLoaded so `sizeFor`/Escape/outside-
  * click all agree on the current state.
  */
@@ -699,9 +761,8 @@ async function openContextMenu(
   setMenuOpen(true);
   renderContextMenu(menu, actions, onSelect);
   // Grow the window while the card is still hidden, then fade it in.
-  await applyState(cfg, false, true);
-  const size = sizeFor(cfg.collapsed, false, true);
-  positionContextMenu(menu, clickY, size.height);
+  const placed = await applyState(cfg, false, true);
+  positionContextMenu(menu, clickY, placed.window.height);
   menu.hidden = false;
   // Force a style flush so the transition starts from the hidden state.
   void menu.offsetWidth;
@@ -771,13 +832,16 @@ async function persistConfig(cfg: OrbitbarConfig): Promise<void> {
 }
 
 /**
- * Drag + snap. #bar carries data-tauri-drag-region so the runtime performs the
+ * Drag. #bar carries data-tauri-drag-region so the runtime performs the
  * native OS drag synchronously inside the mousedown message (this is the
  * reliable cross-platform path; a manual IPC-driven move loses pointer events
- * the moment the cursor leaves the webview). We only track the gesture and
- * snap + persist when the user releases.
+ * the moment the cursor leaves the webview). We only track the gesture and,
+ * when the user releases, clamp the bar into its monitor (it stays where it was
+ * dropped otherwise) and persist the position and monitor. `reflow` re-applies
+ * the window for whatever is open, which also moves the menu/panel to the side
+ * with room at the new position.
  */
-function enableDrag(cfg: OrbitbarConfig): void {
+function enableDrag(cfg: OrbitbarConfig, reflow: () => Promise<Placement>): void {
   const bar = document.querySelector<HTMLElement>("#bar");
   if (!bar) return;
 
@@ -789,28 +853,19 @@ function enableDrag(cfg: OrbitbarConfig): void {
     if (target.closest(".tab")) return;
     if (ev.button !== 0) return;
     dragging = true;
-    lastSnapKey = null;
   });
 
   // The OS drives the window during the native drag; when the user releases the
-  // hwnd that held mouse capture fires this. Snap to the right edge of the
-  // monitor under the window center and persist it.
+  // hwnd that held mouse capture fires this.
   bar.addEventListener("pointerup", () => {
     if (!dragging) return;
     dragging = false;
     void (async () => {
-      const pos = await win.outerPosition();
-      const size = await win.outerSize();
-      const cx = pos.x + size.width / 2;
-      const cy = pos.y + size.height / 2;
-      const monitor = await monitorFromPoint(cx, cy);
-      if (!monitor) return;
-      await snapToMonitor(monitor, size, cfg.margin);
-      const monitorName = monitor.name || "primary";
-      if (cfg.monitor !== monitorName) {
-        cfg.monitor = monitorName;
-        await persistConfig(cfg);
-      }
+      const before = placement?.bar;
+      const placed = await reflow();
+      // A plain click on the bar background moves nothing: no config write.
+      if (before && before.x === placed.bar.x && before.y === placed.bar.y) return;
+      if (rememberBar(cfg)) await persistConfig(cfg);
     })();
   });
 }
@@ -889,6 +944,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     let autostartCells = cells ? bindAutostartCells(cells, cfg.items) : new Map<HTMLElement, string>();
     await refreshAutostartUi(autostartCells);
 
+    await initPlacement(cfg);
+
     let panelOpen = false;
     // Only one of panelOpen / menuOpen is ever true: opening either closes
     // the other first (see openContextMenu and toggleCollapsed).
@@ -921,7 +978,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const toggleCollapsed = async () => {
       // The close skips its own shrink: the single applyState below lands the
       // window straight on its final size. The new look is painted first, in
-      // the still-large (right-anchored) window, so the resize hides nothing.
+      // the still-large window, so the resize hides nothing.
       await closeContextMenu(cfg, setMenuOpen, false);
       if (cfg.collapsed) {
         cfg.collapsed = false;
@@ -929,9 +986,16 @@ window.addEventListener("DOMContentLoaded", async () => {
         await applyState(cfg, panelOpen, false);
       } else {
         cfg.collapsed = true;
+        // The tab ends up centered on the bar's center (Rust keeps that
+        // point), so paint it there in the window that is still tall.
+        if (placement) {
+          setBarDy(Math.max(0, (placement.window.height - SIZE_COLLAPSED.height) / 2));
+        }
         setCollapsedUi(true);
         await togglePanel(false);
       }
+      // Collapsing or expanding re-anchors the bar, so its position changed.
+      rememberBar(cfg);
       await persistConfig(cfg);
     };
 
@@ -987,6 +1051,9 @@ window.addEventListener("DOMContentLoaded", async () => {
         const fresh = await invoke<ConfigPayload>("get_config");
         const autostartOn = (await readAutostart()) ?? fresh.config.autoStart;
         Object.assign(cfg, fresh.config);
+        // A key removed from the file is absent from `fresh`, not undefined in
+        // it, so Object.assign would keep the stale value.
+        cfg.position = fresh.config.position ?? null;
         applyTheme(fresh.palette);
         themeName = fresh.palette.name;
         document.documentElement.style.setProperty("--ob-font-size", `${cfg.fontSize}px`);
@@ -1172,7 +1239,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       void closePanel();
     });
 
-    enableDrag(cfg);
+    enableDrag(cfg, () => applyState(cfg, panelOpen, menuOpen));
   } catch (err) {
     console.error("orbitbar: failed to load config", err);
   }

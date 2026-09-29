@@ -68,8 +68,24 @@ body {
    * exactly where the panel (a real flex sibling, fixed 320px) or the
    * context menu (a `position: fixed` overlay, NOT a flex sibling) render;
    * flex-end keeps the bar pinned right in both cases and when neither is
-   * open. */
+   * open. `body.side-right` below flips this when the extra room is on the
+   * bar's right instead. */
   justify-content: flex-end;
+}
+
+/*
+ * The bar can sit anywhere on screen, so the menu/panel go on whichever side
+ * of it has room. main.ts (applyLayout) adds `side-right` when Rust says the
+ * window grew to the right of the bar: the bar then pins to the left of the
+ * window and the panel comes after it. Left is the default, so a bar at the
+ * right edge renders exactly as before.
+ */
+body.side-right {
+  justify-content: flex-start;
+}
+
+body.side-right .panel {
+  order: 1;
 }
 
 /*
@@ -130,8 +146,8 @@ body.moon .bar {
 }
 
 /*
- * The panel: its own rounded rectangular card immediately to the left of
- * the bar (see index.html and the `.bar` comment above), never clipped by
+ * The panel: its own rounded rectangular card immediately beside the bar
+ * (to its left by default, to its right under `body.side-right`; see index.html and the `.bar` comment above), never clipped by
  * the bar's crescent curve. A light 12px radius, not the bar's half-ellipse
  * — the WPF original placed the panel beside the bar as its own shape.
  */
@@ -297,6 +313,7 @@ body.moon .bar {
  * the extra width the window grows for it. `position: fixed` puts it
  * relative to the window's own content area (there is no browser chrome),
  * so `left` is just an inset from the window's left edge, not the bar's.
+ * `body.side-right` mirrors it when the window grew to the right of the bar.
  */
 .context-menu {
   position: fixed;
@@ -326,8 +343,21 @@ body.moon .bar {
   transform: none;
 }
 
+/* Window grew to the right of the bar: the card sits against the window's
+ * right edge and slides out toward that side. */
+body.side-right .context-menu {
+  left: auto;
+  right: 6px;
+  transform: translateX(-8px);
+}
+
+body.side-right .context-menu.open {
+  transform: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .context-menu {
+  .context-menu,
+  body.side-right .context-menu {
     transform: none;
     transition: none;
   }
@@ -496,9 +526,11 @@ body.collapsed .bar {
   flex-basis: 46px;
   width: 46px;
   /* The window grows taller while the context menu is open; the tab must
-   * stay a 46px square centered on the edge instead of stretching with it. */
+   * stay a 46px square instead of stretching with it, and stay where it was
+   * on screen: main.ts sets --ob-bar-dy to the tab's offset in the window. */
   height: 46px;
-  align-self: center;
+  align-self: flex-start;
+  margin-top: var(--ob-bar-dy, 0px);
   border-radius: var(--ob-tab-radius) 0 0 var(--ob-tab-radius);
 }
 

@@ -61,7 +61,7 @@ is test-first; the frontend only applies the result.
       fixed and everything inside the work area. Also the restore rule for a saved position
       (valid → use it, clamped; off-screen or absent → right-center). Exposed as Tauri
       commands. Checks: RED then GREEN `cargo test`, clippy.
-- [ ] **F3 — Frontend uses free placement.** Menu, panel and collapse use F2 instead of
+- [x] **F3 — Frontend uses free placement.** Menu, panel and collapse use F2 instead of
       re-snapping to the right edge; the menu/panel render on the side F2 returns; drag
       release persists position without snapping; startup restores the saved position.
       Checks: CI set; manual — bar away from the edge, open menu from right-click and from
@@ -91,7 +91,7 @@ then promote to `main` without a tag unless the user asks for a release.
   (desktop only). `npx tsc --noEmit`: clean; `npm run build`: ok; `cargo test`: 113 passed;
   `cargo clippy --all-targets -- -D warnings`: clean. Commit `17f834e`.
   Manual, pending: launch the release exe twice, one bar, the second focuses the first.
-- F2 done (TDD on, runner `cargo test`). RED: `cargo test` with `unimplemented!()` stubs and 20 new
+- F2 done, commit `4c61371` (TDD on, runner `cargo test`). RED: `cargo test` with `unimplemented!()` stubs and 20 new
   tests: `test result: FAILED. 113 passed; 20 failed` (all 20 `placement::tests::*`, panic
   `not implemented`); config tests failed to compile (`no field position`, `Position` missing).
   GREEN: `135 passed; 0 failed; 1 ignored`. `cargo clippy --all-targets -- -D warnings`: clean;
@@ -102,7 +102,16 @@ then promote to `main` without a tag unless the user asks for a release.
   Config: optional `position: {x, y}` (skipped when unset). Collapse/expand anchoring: vertical
   center kept, horizontal edge nearest the monitor edge kept. `snap_window` is kept only until F3
   switches the frontend, so this commit still runs.
+- F3 done. `main.ts`: `applyState` calls `place_window`, reading the bar back from the live window
+  (position + last placement offset) so a drag is never undone; drag release re-places (clamps)
+  and persists position + monitor only if the bar moved; collapse/expand persists the re-anchored
+  position; startup is restored in Rust (`restore_bar`). `styles.css`: `body.side-right` flips
+  the panel/menu; collapsed tab offset via `--ob-bar-dy`. `snap_window` removed.
+  `npx tsc --noEmit` clean; `npm run build` ok; `cargo test` 135 passed; clippy clean.
+  Manual, pending (cannot run GUI here): bar away from the edge, menu from right-click and from
+  the settings cell, panel, collapse/expand, near left and right edges and top/bottom, drag then
+  restart, second launch. No route deviation: one writer, no delegation.
 
 ## Next step
 
-F3.
+F4.
