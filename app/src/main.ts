@@ -438,16 +438,17 @@ function isWebUrl(raw: string): boolean {
   }
 }
 
-/** Runs a launch action (`open:<url>` or `run:<program> [args]`). Returns an
- * error message for the panel, or null on success. */
-async function runLaunchAction(action: string): Promise<string | null> {
+/** Runs a launch action (`open:<url>` or `run:<program> [args]`). A `run:` sends
+ * only the item id: the backend looks the command up in its own config.
+ * Returns an error message for the panel, or null on success. */
+async function runLaunchAction(id: string, action: string): Promise<string | null> {
   try {
     if (action.startsWith("open:")) {
       const url = action.slice("open:".length).trim();
       if (!isWebUrl(url)) return `open: accepts only http:// and https:// URLs (got "${url}")`;
       await openUrl(url);
     } else {
-      await invoke("run_command", { command: action.slice("run:".length) });
+      await invoke("run_command", { id });
     }
     return null;
   } catch (err) {
@@ -1125,7 +1126,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         // Launch actions act in place: on success the panel is left as it is,
         // on failure the reason is shown in the panel like any action error.
         if (action.startsWith("open:") || action.startsWith("run:")) {
-          const failure = await runLaunchAction(action);
+          const failure = await runLaunchAction(target.dataset.id ?? "", action);
           if (failure !== null) {
             activePanelAction = action;
             await showPanelMessage(failure, body, togglePanel);

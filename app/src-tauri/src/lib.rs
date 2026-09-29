@@ -76,12 +76,15 @@ fn ensure_pricing_file(app: tauri::AppHandle) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Runs the `run:<program> [args]` item action: spawns the program directly
-/// (no shell) and returns at once. Only the frontend's explicit cell click
-/// calls this; nothing runs at startup. See `launch::spawn`.
+/// Runs a cell's `run:<program> [args]` action: spawns the program directly
+/// (no shell) and returns at once. The frontend sends only the item id; the
+/// command line comes from the config loaded here, and an id that is unknown or
+/// whose action is not `run:` is an error. Only an explicit cell click calls
+/// this; nothing runs at startup. See `launch::command_for_item`.
 #[tauri::command]
-fn run_command(command: String) -> Result<(), String> {
-    launch::spawn(&command)
+fn run_command(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let cfg = config::load(&app)?;
+    launch::spawn(&launch::command_for_item(&cfg.items, &id)?)
 }
 
 /// Exits the whole process, called by the context menu's "Quit Orbitbar".
